@@ -86,6 +86,6 @@ default 4
 config SHLOG_PANIC_ON_SUBSYS
 bool "enable SHARP handler to call panic when subsystem crashed."
 depends on SHLOG_SHLOG
-default y
+default n
 
 endmenu
