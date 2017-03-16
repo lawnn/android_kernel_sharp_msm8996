@@ -50,6 +50,14 @@ extern int32_t shcampdaf_fw_init(struct msm_sensor_ctrl_t *s_ctrl);
 extern int32_t sh_ois_fw_wait_complete(void);
 struct mutex shcampdaf_mutex;
 extern int sh_ois_param(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp);
+
+
+static struct msm_camera_i2c_reg_array *reg_setting_gl = NULL;
+static int reg_setting_max_size = 0;
+static struct msm_camera_i2c_seq_reg_array *reg_sec_setting_gl = NULL;
+static int reg_sec_setting_max_size = 0;
+static int kz_state_reg = 0;
+static int kz_state_seq_reg = 0;
 /* SHLOCAL_CAMERA_DRIVERS<- */
 
 static void msm_sensor_adjust_mclk(struct msm_camera_power_ctrl_t *ctrl)
@@ -158,6 +166,30 @@ int msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
 	}
 /* SHLOCAL_CAMERA_DRIVERS-> */
 	sh_ois_fw_wait_complete();
+
+	if(reg_setting_gl != NULL){
+		if(kz_state_reg != 0){
+			vfree(reg_setting_gl);
+		}
+		else{
+			kfree(reg_setting_gl);
+		}
+		reg_setting_gl = NULL;
+		reg_setting_max_size = 0;
+		kz_state_reg = 0;
+	}
+
+	if(reg_sec_setting_gl != NULL){
+		if(kz_state_seq_reg != 0){
+			vfree(reg_sec_setting_gl);
+		}
+		else{
+			kfree(reg_sec_setting_gl);
+		}
+		reg_sec_setting_gl = NULL;
+		reg_sec_setting_max_size = 0;
+		kz_state_seq_reg = 0;
+	}
 /* SHLOCAL_CAMERA_DRIVERS<- */
 	return msm_camera_power_down(power_info, sensor_device_type,
 		sensor_i2c_client);
@@ -488,8 +520,6 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 		struct msm_camera_i2c_seq_reg_array *pos_reg_sec_setting = NULL;
 		int i;
 		int cur_size, array_size;
-		int kz_state_reg = 0;
-		int kz_state_seq_reg = 0;
 
 		if (s_ctrl->is_csid_tg_mode)
 			goto DONE;
@@ -522,34 +552,47 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			break;
 		}
 		
-		reg_setting = kzalloc(conf_array.size *
-			(sizeof(struct msm_camera_i2c_reg_array)), GFP_KERNEL);
-		if (!reg_setting) {
-			pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
-			kz_state_reg = -1;
-			reg_setting = vmalloc(conf_array.size * (sizeof(struct msm_camera_i2c_reg_array)));
-			if(!reg_setting) {
-				pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
-				rc = -ENOMEM;
-				break;
+		CDBG("%s:%d conf_array.size=%d reg_setting_max_size=%d\n", __func__, __LINE__, conf_array.size, reg_setting_max_size);
+		if((reg_setting_gl != NULL) && (conf_array.size > reg_setting_max_size) ){
+			if(kz_state_reg != 0){
+				vfree(reg_setting_gl);
 			}
-			memset(reg_setting, 0, conf_array.size *(sizeof(struct msm_camera_i2c_reg_array)));
+			else{
+				kfree(reg_setting_gl);
+			}
+			reg_setting_gl = NULL;
+			reg_setting_max_size = 0;
+			kz_state_reg = 0;
 		}
+		
+		if(reg_setting_gl == NULL){
+			CDBG("%s:%d reg_setting_gl alloc\n", __func__, __LINE__);
+			reg_setting_gl = kmalloc(conf_array.size *
+				(sizeof(struct msm_camera_i2c_reg_array)), GFP_KERNEL);
+			if (!reg_setting_gl) {
+				pr_err("%s:%d kmalloc failed\n", __func__, __LINE__);
+				kz_state_reg = -1;
+				reg_setting_gl = vmalloc(conf_array.size * (sizeof(struct msm_camera_i2c_reg_array)));
+				if(!reg_setting_gl) {
+					pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
+					rc = -ENOMEM;
+					break;
+				}
+			}
+			reg_setting_max_size = conf_array.size;
+		}
+		
+		reg_setting = reg_setting_gl;
+		memset(reg_setting, 0, conf_array.size *(sizeof(struct msm_camera_i2c_reg_array)));
+		
 		if (copy_from_user(reg_setting,
 			(void *)(conf_array.reg_setting),
 			conf_array.size *
 			sizeof(struct msm_camera_i2c_reg_array))) {
 			pr_err("%s:%d failed\n", __func__, __LINE__);
-			if(kz_state_reg != 0){
-				vfree(reg_setting);
-			}
-			else{
-				kfree(reg_setting);
-			}
 			rc = -EFAULT;
 			break;
 		}
-		
 		
 		if(conf_array.data_type == MSM_CAMERA_I2C_BYTE_DATA){
 			uint16_t reg_addr;
@@ -586,20 +629,41 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 
 			CDBG("%s conf_array.size = %d\n", __func__, conf_array.size);
 			CDBG("%s array_size = %d\n", __func__, array_size);
-			reg_sec_setting = kzalloc(array_size *
-				(sizeof(struct msm_camera_i2c_seq_reg_array)),
-				GFP_KERNEL);
-			if (!reg_sec_setting) {
-				pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
-				kz_state_seq_reg = -1;
-				reg_sec_setting = vmalloc(conf_array.size * (sizeof(struct msm_camera_i2c_seq_reg_array)));
-				if(!reg_sec_setting) {
-					pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
-					return -EFAULT;
+			
+			CDBG("%s:%d array_size=%d reg_sec_setting_max_size=%d\n", __func__, __LINE__, array_size, reg_sec_setting_max_size);
+			if((reg_sec_setting_gl != NULL) && (array_size > reg_sec_setting_max_size) ){
+				if(kz_state_seq_reg != 0){
+					vfree(reg_sec_setting_gl);
 				}
-				memset(reg_sec_setting, 0, conf_array.size *(sizeof(struct msm_camera_i2c_seq_reg_array)));
+				else{
+					kfree(reg_sec_setting_gl);
+				}
+				reg_sec_setting_gl = NULL;
+				reg_sec_setting_max_size = 0;
+				kz_state_seq_reg = 0;
 			}
 
+			if(reg_sec_setting_gl == NULL){
+				CDBG("%s:%d reg_sec_setting_gl alloc\n", __func__, __LINE__);
+				reg_sec_setting_gl = kmalloc(array_size *
+					(sizeof(struct msm_camera_i2c_seq_reg_array)),
+					GFP_KERNEL);
+				if (!reg_sec_setting_gl) {
+					pr_err("%s:%d kmalloc failed\n", __func__, __LINE__);
+					kz_state_seq_reg = -1;
+					reg_sec_setting_gl = vmalloc(array_size * (sizeof(struct msm_camera_i2c_seq_reg_array)));
+					if(!reg_sec_setting_gl) {
+						pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
+						rc = -ENOMEM;
+						break;
+					}
+				}
+				reg_sec_setting_max_size = array_size;
+			}
+		
+			reg_sec_setting = reg_sec_setting_gl;
+			memset(reg_sec_setting, 0, array_size *(sizeof(struct msm_camera_i2c_seq_reg_array)));
+			
 			pos_reg_setting = reg_setting;
 			pos_reg_sec_setting = reg_sec_setting;
 			
@@ -649,13 +713,6 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			
 			CDBG("%s rc = %d\n", __func__, (int)rc);
 
-			if(kz_state_seq_reg != 0){
-				vfree(reg_sec_setting);
-			}
-			else{
-				kfree(reg_sec_setting);
-			}
-
 		} else {
 
 			CDBG("%s conf_array.data_type = %d\n", __func__, conf_array.data_type);
@@ -667,12 +724,6 @@ static int msm_sensor_config32(struct msm_sensor_ctrl_t *s_ctrl,
 			CDBG("%s rc = %d\n", __func__, (int)rc);
 		}
 		
-		if(kz_state_reg != 0){
-			vfree(reg_setting);
-		}
-		else{
-			kfree(reg_setting);
-		}
 		CDBG("%s end\n", __func__);
 		break;
 	}
@@ -1412,8 +1463,6 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 		struct msm_camera_i2c_seq_reg_array *pos_reg_sec_setting = NULL;
 		int i;
 		int cur_size, array_size;
-		int kz_state_reg = 0;
-		int kz_state_seq_reg = 0;
 
 		if (s_ctrl->is_csid_tg_mode)
 			goto DONE;
@@ -1440,29 +1489,43 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			break;
 		}
 
-		reg_setting = kzalloc(conf_array.size *
-			(sizeof(struct msm_camera_i2c_reg_array)), GFP_KERNEL);
-		if (!reg_setting) {
-			pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
-			kz_state_reg = -1;
-			reg_setting = vmalloc(conf_array.size * (sizeof(struct msm_camera_i2c_reg_array)));
-			if(!reg_setting) {
-				pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
-				rc = -ENOMEM;
-				break;
+		CDBG("%s:%d conf_array.size=%d reg_setting_max_size=%d\n", __func__, __LINE__, conf_array.size, reg_setting_max_size);
+		if((reg_setting_gl != NULL) && (conf_array.size > reg_setting_max_size) ){
+			if(kz_state_reg != 0){
+				vfree(reg_setting_gl);
 			}
-			memset(reg_setting, 0, conf_array.size *(sizeof(struct msm_camera_i2c_reg_array)));
+			else{
+				kfree(reg_setting_gl);
+			}
+			reg_setting_gl = NULL;
+			reg_setting_max_size = 0;
+			kz_state_reg = 0;
 		}
+		
+		if(reg_setting_gl == NULL){
+			CDBG("%s:%d reg_setting_gl alloc\n", __func__, __LINE__);
+			reg_setting_gl = kmalloc(conf_array.size *
+				(sizeof(struct msm_camera_i2c_reg_array)), GFP_KERNEL);
+			if (!reg_setting_gl) {
+				pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
+				kz_state_reg = -1;
+				reg_setting_gl = vmalloc(conf_array.size * (sizeof(struct msm_camera_i2c_reg_array)));
+				if(!reg_setting_gl) {
+					pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
+					rc = -ENOMEM;
+					break;
+				}
+			}
+			reg_setting_max_size = conf_array.size;
+		}
+		
+		reg_setting = reg_setting_gl;
+		memset(reg_setting, 0, conf_array.size *(sizeof(struct msm_camera_i2c_reg_array)));
+		
 		if (copy_from_user(reg_setting, (void *)conf_array.reg_setting,
 			conf_array.size *
 			sizeof(struct msm_camera_i2c_reg_array))) {
 			pr_err("%s:%d failed\n", __func__, __LINE__);
-			if(kz_state_reg != 0){
-				vfree(reg_setting);
-			}
-			else{
-				kfree(reg_setting);
-			}
 			rc = -EFAULT;
 			break;
 		}
@@ -1502,20 +1565,41 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 
 			CDBG("%s conf_array.size = %d\n", __func__, conf_array.size);
 			CDBG("%s array_size = %d\n", __func__, array_size);
-			reg_sec_setting = kzalloc(array_size *
-				(sizeof(struct msm_camera_i2c_seq_reg_array)),
-				GFP_KERNEL);
-			if (!reg_sec_setting) {
-				pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
-				kz_state_seq_reg = -1;
-				reg_sec_setting = vmalloc(conf_array.size * (sizeof(struct msm_camera_i2c_seq_reg_array)));
-				if(!reg_sec_setting) {
-					pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
-					return -EFAULT;
+			
+			CDBG("%s:%d array_size=%d reg_sec_setting_max_size=%d\n", __func__, __LINE__, array_size, reg_sec_setting_max_size);
+			if((reg_sec_setting_gl != NULL) && (array_size > reg_sec_setting_max_size) ){
+				if(kz_state_seq_reg != 0){
+					vfree(reg_sec_setting_gl);
 				}
-				memset(reg_sec_setting, 0, conf_array.size *(sizeof(struct msm_camera_i2c_seq_reg_array)));
+				else{
+					kfree(reg_sec_setting_gl);
+				}
+				reg_sec_setting_gl = NULL;
+				reg_sec_setting_max_size = 0;
+				kz_state_seq_reg = 0;
 			}
 
+			if(reg_sec_setting_gl == NULL){
+				CDBG("%s:%d reg_sec_setting_gl alloc\n", __func__, __LINE__);
+				reg_sec_setting_gl = kmalloc(array_size *
+					(sizeof(struct msm_camera_i2c_seq_reg_array)),
+					GFP_KERNEL);
+				if (!reg_sec_setting_gl) {
+					pr_err("%s:%d kmalloc failed\n", __func__, __LINE__);
+					kz_state_seq_reg = -1;
+					reg_sec_setting_gl = vmalloc(array_size * (sizeof(struct msm_camera_i2c_seq_reg_array)));
+					if(!reg_sec_setting_gl) {
+						pr_err("%s:%d vmalloc also failed\n", __func__, __LINE__);
+						rc = -ENOMEM;
+						break;
+					}
+				}
+				reg_sec_setting_max_size = array_size;
+			}
+		
+			reg_sec_setting = reg_sec_setting_gl;
+			memset(reg_sec_setting, 0, array_size *(sizeof(struct msm_camera_i2c_seq_reg_array)));
+			
 			pos_reg_setting = reg_setting;
 			pos_reg_sec_setting = reg_sec_setting;
 			
@@ -1565,13 +1649,6 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			
 			CDBG("%s rc = %d\n", __func__, (int)rc);
 
-			if(kz_state_seq_reg != 0){
-				vfree(reg_sec_setting);
-			}
-			else{
-				kfree(reg_sec_setting);
-			}
-
 		} else {
 
 			CDBG("%s conf_array.data_type = %d\n", __func__, conf_array.data_type);
@@ -1583,13 +1660,6 @@ int msm_sensor_config(struct msm_sensor_ctrl_t *s_ctrl, void __user *argp)
 			CDBG("%s rc = %d\n", __func__, (int)rc);
 		}
 		
-		if(kz_state_reg != 0){
-			vfree(reg_setting);
-		}
-		else{
-			kfree(reg_setting);
-		}
-
 		CDBG("%s end\n", __func__);
 		break;
 	}

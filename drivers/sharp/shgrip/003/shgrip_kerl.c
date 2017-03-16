@@ -49,6 +49,8 @@
 
 #include <linux/pm_qos.h>
 #include <sharp/sh_smem.h>
+#include <sharp/shub_driver.h>
+
 /* ------------------------------------------------------------------------- */
 /* DEFINE                                                                    */
 /* ------------------------------------------------------------------------- */
@@ -109,6 +111,7 @@
 #define SHGRIP_RESET_START_WAIT_US			(3*1000)		
 
 #define SHGRIP_PWR_OFF_WAIT_US				(10)			
+#define SHGRIP_REGULATOR_OFF_WAIT_US		(1*1000)		
 
 #define SHGRIP_CS_WAIT_US					(100)			
 #define SHGRIP_COMREQ_WAIT_US				(200)			
@@ -2979,6 +2982,8 @@ static int shgrip_seq_grip_power_off(struct shgrip_drv *ctrl)
 		}
 	}
 	
+	shgrip_sys_delay_us(SHGRIP_REGULATOR_OFF_WAIT_US);
+	
 	return ret;
 }
 
@@ -3014,6 +3019,11 @@ static int shgrip_seq_grip_sensor_on(struct shgrip_drv *ctrl)
 	if (ret) {
 		SHGRIP_ERR("request_irq err. ret=%d\n", ret);
 		return GRIP_RESULT_FAILURE;
+	}
+	
+	ret = shub_api_reset_completely_still();
+	if (ret) {
+		SHGRIP_ERR("shub_api_reset_completely_still err. ret=%d\n", ret);
 	}
 	
 	ret = shgrip_command_tson(ctrl);
@@ -4201,6 +4211,11 @@ static int shgrip_seq_request_calibration(struct shgrip_drv *ctrl)
 	
 	shgrip_tson_mode = SHGRIP_PRM_SENSOR_ALL_ON;
 	
+	ret = shub_api_reset_completely_still();
+	if (ret) {
+		SHGRIP_ERR("shub_api_reset_completely_still err. ret=%d\n", ret);
+	}
+	
 	ret = shgrip_command_tson(ctrl);
 	if (ret) {
 		SHGRIP_ERR("shgrip_command_tson err. ret=%d\n", ret);
@@ -4629,6 +4644,11 @@ static int shgrip_seq_calibration_complete(struct shgrip_drv *ctrl,
 	}
 #endif /* SHGRIP_FACTORY_MODE_ENABLE */
 	
+	ret = shub_api_reset_completely_still();
+	if (ret) {
+		SHGRIP_ERR("shub_api_reset_completely_still err. ret=%d\n", ret);
+	}
+	
     ret = shgrip_command_tson(ctrl);
     if (ret) {
         SHGRIP_ERR("shgrip_command_tson err. ret=%d\n", ret);
@@ -4677,6 +4697,11 @@ roll_back:
         return GRIP_RESULT_FAILURE;
     }
 #endif /* SHGRIP_FACTORY_MODE_ENABLE */
+	
+	ret = shub_api_reset_completely_still();
+	if (ret) {
+		SHGRIP_ERR("shub_api_reset_completely_still err. ret=%d\n", ret);
+	}
     
     ret = shgrip_command_tson(ctrl);
     if (ret) {
@@ -4725,6 +4750,11 @@ static int shgrip_seq_calibration_rollback(struct shgrip_drv *ctrl)
 		return GRIP_RESULT_FAILURE;
 	}
 #endif /* SHGRIP_FACTORY_MODE_ENABLE */
+	
+	ret = shub_api_reset_completely_still();
+	if (ret) {
+		SHGRIP_ERR("shub_api_reset_completely_still err. ret=%d\n", ret);
+	}
 	
     ret = shgrip_command_tson(ctrl);
     if (ret) {
@@ -5453,6 +5483,11 @@ static void shgrip_input_event(struct shgrip_drv *ctrl)
 		goto after_recovery;
 	}
 #endif /* SHGRIP_FACTORY_MODE_ENABLE */
+	
+	ret = shub_api_reset_completely_still();
+	if (ret) {
+		SHGRIP_ERR("shub_api_reset_completely_still err. ret=%d\n", ret);
+	}
 	
 	ret = shgrip_command_tson(ctrl);
 	if (ret) {

@@ -1251,6 +1251,78 @@ int shub_api_get_face_check_info(struct shub_face_acc_info *info)
 }
 /* SHMDS_HUB_1302_01 add E */
 
+/* SHMDS_HUB_0340_01 add S */
+static int shub_reset_completely_still(void)
+{
+    HostCmd cmd;
+    HostCmdRes res;
+    int32_t ret;
+    uint8_t prm[2];
+    
+    cmd.cmd.u16 = HC_PICKUP_GET_ENABLE;
+    ret = shub_hostcmd(&cmd, &res, EXE_HOST_ALL, 0);
+    if((SHUB_RC_OK != ret) || (0 != res.err.u16)) {
+        DBG(DBG_LV_ERROR, "%s : HC_PICKUP_GET_ENABLE err(%x)\n", __func__, res.err.u16);
+        return SHUB_RC_ERR;
+    }
+    
+    if((res.res.u8[0] == 0) || (res.res.u8[1] & SHUB_PICKUP_ENABLE_PARAM_STILL) == 0){
+        DBG(DBG_LV_INFO, "%s : still off 0x%x, 0x%x\n", __func__, res.res.u8[0], res.res.u8[1]);
+        return SHUB_RC_OK;
+    }
+    
+    prm[0] = res.res.u8[0];
+    prm[1] = res.res.u8[1];
+    
+    cmd.cmd.u16 = HC_PICKUP_SET_ENABLE;
+    cmd.prm.u8[0] = prm[0];
+    cmd.prm.u8[1] = (uint8_t)(prm[1] & ~SHUB_PICKUP_ENABLE_PARAM_STILL);
+    ret = shub_hostcmd(&cmd, &res, EXE_HOST_ALL, 2);
+    if((SHUB_RC_OK != ret) || (0 != res.err.u16)) {
+        DBG(DBG_LV_ERROR, "%s : HC_PICKUP_SET_ENABLE err1(%x)\n", __func__, res.err.u16);
+        return SHUB_RC_ERR;
+    }
+    
+    cmd.cmd.u16 = HC_PICKUP_SET_ENABLE;
+    cmd.prm.u8[0] = prm[0];
+    cmd.prm.u8[1] = prm[1];
+    ret = shub_hostcmd(&cmd, &res, EXE_HOST_ALL, 2);
+    if((SHUB_RC_OK != ret) || (0 != res.err.u16)) {
+        DBG(DBG_LV_ERROR, "%s : HC_PICKUP_SET_ENABLE err2(%x)\n", __func__, res.err.u16);
+        return SHUB_RC_ERR;
+    }
+    
+    return SHUB_RC_OK;
+}
+
+int shub_api_reset_completely_still(void)
+{
+    int32_t ret;
+    int32_t iCurrentSensorEnable = atomic_read(&g_CurrentSensorEnable);
+    
+    DBG(DBG_LV_INFO, "%s : start\n", __func__);
+    
+    if((iCurrentSensorEnable & SHUB_ACTIVE_PICKUP) == 0){
+        DBG(DBG_LV_INFO, "%s : pickup off\n", __func__);
+        return SHUB_RC_OK;
+    }
+    
+    if(atomic_read(&g_FWUpdateStatus)){
+        DBG(DBG_LV_ERROR, "%s : FW update\n", __func__);
+        return SHUB_RC_OK;
+    }
+    
+    mutex_lock(&userReqMutex);
+    
+    ret = shub_reset_completely_still();
+    
+    mutex_unlock(&userReqMutex);
+    
+    DBG(DBG_LV_INFO, "%s : End\n", __func__);
+    return ret;
+}
+/* SHMDS_HUB_0340_01 add E */
+
 // SHMDS_HUB_0402_01 add S
 static void shub_wake_lock_init(void)
 {

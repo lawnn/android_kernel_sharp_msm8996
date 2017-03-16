@@ -352,6 +352,7 @@
 			<0xff 295>, /* camss_cpp_mmu_cirpt[0] */
 			<0xff 296>, /* camss_cpp_mmu_pmirpt */
 			<0xff 297>, /* ufs_intrq */
+			<0xff 298>, /* nfc_i2c_drv */
 			<0xff 302>, /* qdss_etrbytecnt_irq */
 			<0xff 310>, /* pcie20_1_int_pls_err */
 			<0xff 311>, /* pcie20_1_int_aer_legacy */
