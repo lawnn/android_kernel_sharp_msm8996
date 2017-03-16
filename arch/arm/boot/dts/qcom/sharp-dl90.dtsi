@@ -29,7 +29,7 @@
 			status = "ok";
 			compatible = "sharp,shgrip_dev";
 			reg = <0>;
-			spi-max-frequency = <960000>;
+			spi-max-frequency = <400000>;
 			interrupt-parent = <&tlmm>;
 			interrupts = <117 0>;
 			sharp,spi-cs   = <&tlmm 2 0x00>;

@@ -173,14 +173,12 @@ static struct srcu_struct pmus_srcu;
  *   2 - disallow kernel profiling for unpriv
  *   3 - disallow all unpriv perf event use
  */
-#ifdef CONFIG_SECURITY_PERF_EVENTS_RESTRICT
-int sysctl_perf_event_paranoid __read_mostly = 3;
-#else
 #ifdef CONFIG_PERF_EVENTS_USERMODE
 int sysctl_perf_event_paranoid __read_mostly = -1;
+#elif defined CONFIG_SECURITY_PERF_EVENTS_RESTRICT
+int sysctl_perf_event_paranoid __read_mostly = 3;
 #else
 int sysctl_perf_event_paranoid __read_mostly = 1;
-#endif
 #endif
 
 /* Minimum for 512 kiB + 1 user control page */
@@ -1545,33 +1543,7 @@ static int __perf_remove_from_context(void *info)
 	return 0;
 }
 
-
-#ifdef CONFIG_SMP
-static void perf_retry_remove(struct perf_event *event,
-			      struct remove_event *rep)
-{
-	int up_ret;
-	/*
-	 * CPU was offline. Bring it online so we can
-	 * gracefully exit a perf context.
-	 */
-	up_ret = cpu_up(event->cpu);
-	if (!up_ret)
-		/* Try the remove call once again. */
-		cpu_function_call(event->cpu, __perf_remove_from_context,
-				  rep);
-	else
-		pr_err("Failed to bring up CPU: %d, ret: %d\n",
-		       event->cpu, up_ret);
-}
-#else
-static void perf_retry_remove(struct perf_event *event,
-			      struct remove_event *rep)
-{
-}
-#endif
-
- /*
+/*
  * Remove the event from a task's (or a CPU's) list of events.
  *
  * CPU events are removed with a smp call. For task events we only
@@ -1606,9 +1578,6 @@ static void __ref perf_remove_from_context(struct perf_event *event,
 		 */
 		ret = cpu_function_call(event->cpu, __perf_remove_from_context,
 					&re);
-		if (ret == -ENXIO)
-			perf_retry_remove(event, &re);
-
 		return;
 	}
 
@@ -3232,7 +3201,7 @@ find_lively_task_by_vpid(pid_t vpid)
 
 	/* Reuse ptrace permission checks for now. */
 	err = -EACCES;
-	if (!ptrace_may_access(task, PTRACE_MODE_READ))
+	if (!ptrace_may_access(task, PTRACE_MODE_READ_REALCREDS))
 		goto errout;
 
 	return task;
@@ -3784,28 +3753,21 @@ static void perf_event_for_each(struct perf_event *event,
 	mutex_unlock(&ctx->mutex);
 }
 
-static int perf_event_period(struct perf_event *event, u64 __user *arg)
-{
-	struct perf_event_context *ctx = event->ctx;
-	int ret = 0, active;
+struct period_event {
+	struct perf_event *event;
 	u64 value;
+};
 
-	if (!is_sampling_event(event))
-		return -EINVAL;
+static int __perf_event_period(void *info)
+{
+	struct period_event *pe = info;
+	struct perf_event *event = pe->event;
+	struct perf_event_context *ctx = event->ctx;
+	u64 value = pe->value;
+	bool active;
 
-	if (copy_from_user(&value, arg, sizeof(value)))
-		return -EFAULT;
-
-	if (!value)
-		return -EINVAL;
-
-	raw_spin_lock_irq(&ctx->lock);
+	raw_spin_lock(&ctx->lock);
 	if (event->attr.freq) {
-		if (value > sysctl_perf_event_sample_rate) {
-			ret = -EINVAL;
-			goto unlock;
-		}
-
 		event->attr.sample_freq = value;
 	} else {
 		event->attr.sample_period = value;
@@ -3824,11 +3786,53 @@ static int perf_event_period(struct perf_event *event, u64 __user *arg)
 		event->pmu->start(event, PERF_EF_RELOAD);
 		perf_pmu_enable(ctx->pmu);
 	}
+	raw_spin_unlock(&ctx->lock);
 
-unlock:
+	return 0;
+}
+
+static int perf_event_period(struct perf_event *event, u64 __user *arg)
+{
+	struct period_event pe = { .event = event, };
+	struct perf_event_context *ctx = event->ctx;
+	struct task_struct *task;
+	u64 value;
+
+	if (!is_sampling_event(event))
+		return -EINVAL;
+
+	if (copy_from_user(&value, arg, sizeof(value)))
+		return -EFAULT;
+
+	if (!value)
+		return -EINVAL;
+
+	if (event->attr.freq && value > sysctl_perf_event_sample_rate)
+		return -EINVAL;
+
+	task = ctx->task;
+	pe.value = value;
+
+	if (!task) {
+		cpu_function_call(event->cpu, __perf_event_period, &pe);
+		return 0;
+	}
+
+retry:
+	if (!task_function_call(task, __perf_event_period, &pe))
+		return 0;
+
+	raw_spin_lock_irq(&ctx->lock);
+	if (ctx->is_active) {
+		raw_spin_unlock_irq(&ctx->lock);
+		task = ctx->task;
+		goto retry;
+	}
+
+	__perf_event_period(&pe);
 	raw_spin_unlock_irq(&ctx->lock);
 
-	return ret;
+	return 0;
 }
 
 static const struct file_operations perf_fops;
@@ -4453,12 +4457,20 @@ static const struct file_operations perf_fops = {
  * to user-space before waking everybody up.
  */
 
+static inline struct fasync_struct **perf_event_fasync(struct perf_event *event)
+{
+	/* only the parent has fasync state */
+	if (event->parent)
+		event = event->parent;
+	return &event->fasync;
+}
+
 void perf_event_wakeup(struct perf_event *event)
 {
 	ring_buffer_wakeup(event);
 
 	if (event->pending_kill) {
-		kill_fasync(&event->fasync, SIGIO, event->pending_kill);
+		kill_fasync(perf_event_fasync(event), SIGIO, event->pending_kill);
 		event->pending_kill = 0;
 	}
 }
@@ -5693,7 +5705,7 @@ static int __perf_event_overflow(struct perf_event *event,
 	else
 		perf_event_output(event, data, regs);
 
-	if (event->fasync && event->pending_kill) {
+	if (*perf_event_fasync(event) && event->pending_kill) {
 		event->pending_wakeup = 1;
 		irq_work_queue(&event->pending);
 	}
@@ -5719,9 +5731,6 @@ struct swevent_htable {
 
 	/* Recursion avoidance in each contexts */
 	int				recursion[PERF_NR_CONTEXTS];
-
-	/* Keeps track of cpu being initialized/exited */
-	bool				online;
 };
 
 static DEFINE_PER_CPU(struct swevent_htable, swevent_htable);
@@ -5968,14 +5977,8 @@ static int perf_swevent_add(struct perf_event *event, int flags)
 	hwc->state = !(flags & PERF_EF_START);
 
 	head = find_swevent_head(swhash, event);
-	if (!head) {
-		/*
-		 * We can race with cpu hotplug code. Do not
-		 * WARN if the cpu just got unplugged.
-		 */
-		WARN_ON_ONCE(swhash->online);
+	if (WARN_ON_ONCE(!head))
 		return -EINVAL;
-	}
 
 	hlist_add_head_rcu(&event->hlist_entry, head);
 
@@ -6147,7 +6150,6 @@ static struct pmu perf_swevent = {
 	.start		= perf_swevent_start,
 	.stop		= perf_swevent_stop,
 	.read		= perf_swevent_read,
-	.events_across_hotplug = 1,
 };
 
 #ifdef CONFIG_EVENT_TRACING
@@ -6265,7 +6267,6 @@ static struct pmu perf_tracepoint = {
 	.start		= perf_swevent_start,
 	.stop		= perf_swevent_stop,
 	.read		= perf_swevent_read,
-	.events_across_hotplug = 1,
 };
 
 static inline void perf_tp_register(void)
@@ -6491,7 +6492,6 @@ static struct pmu perf_cpu_clock = {
 	.start		= cpu_clock_event_start,
 	.stop		= cpu_clock_event_stop,
 	.read		= cpu_clock_event_read,
-	.events_across_hotplug = 1,
 };
 
 /*
@@ -6570,7 +6570,6 @@ static struct pmu perf_task_clock = {
 	.start		= task_clock_event_start,
 	.stop		= task_clock_event_stop,
 	.read		= task_clock_event_read,
-	.events_across_hotplug = 1,
 };
 
 static void perf_pmu_nop_void(struct pmu *pmu)
@@ -8171,7 +8170,6 @@ static void perf_event_init_cpu(int cpu)
 	struct swevent_htable *swhash = &per_cpu(swevent_htable, cpu);
 
 	mutex_lock(&swhash->hlist_mutex);
-	swhash->online = true;
 	if (swhash->hlist_refcount > 0) {
 		struct swevent_hlist *hlist;
 
@@ -8271,14 +8269,7 @@ static void perf_event_start_swclock(int cpu)
 
 static void perf_event_exit_cpu(int cpu)
 {
-	struct swevent_htable *swhash = &per_cpu(swevent_htable, cpu);
-
 	perf_event_exit_cpu_context(cpu);
-
-	mutex_lock(&swhash->hlist_mutex);
-	swhash->online = false;
-	swevent_hlist_release(swhash);
-	mutex_unlock(&swhash->hlist_mutex);
 }
 #else
 static inline void perf_event_exit_cpu(int cpu) { }

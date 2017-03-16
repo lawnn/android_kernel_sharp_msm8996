@@ -337,6 +337,9 @@ static int shdisp_ioctl_set_mfr(void __user *argp);
 #if defined(SHDISP_ILLUMI_TRIPLE_COLOR_LED) && defined(SHDISP_ANIME_COLOR_LED)
 static int shdisp_ioctl_set_illumi_triple_color(void __user *argp);
 #endif /* SHDISP_ILLUMI_TRIPLE_COLOR_LED && SHDISP_ANIME_COLOR_LED */
+#ifdef SHDISP_PICADJ_USE_QDCM
+static int shdisp_ioctl_get_lut_info(void __user *argp);
+#endif /* SHDISP_PICADJ_USE_QDCM */
 
 static int shdisp_SQE_main_lcd_power_on(void);
 static int shdisp_SQE_main_lcd_power_off(void);
@@ -1970,6 +1973,11 @@ static long shdisp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         ret = shdisp_ioctl_set_illumi_triple_color(argp);
         break;
 #endif /* SHDISP_ILLUMI_TRIPLE_COLOR_LED && SHDISP_ANIME_COLOR_LED */
+#ifdef SHDISP_PICADJ_USE_QDCM
+    case SHDISP_IOCTL_GET_LUT_INFO:
+        ret = shdisp_ioctl_get_lut_info(argp);
+        break;
+#endif /* SHDISP_PICADJ_USE_QDCM */
     default:
         SHDISP_ERR("<INVALID_VALUE> cmd(0x%08x).", cmd);
         ret = -EFAULT;
@@ -2006,6 +2014,8 @@ static int shdisp_ioctl_get_context(void __user *argp)
     int ret;
     struct shdisp_to_user_context shdisp_user_ctx;
 
+    shdisp_semaphore_start();
+
     shdisp_user_ctx.hw_handset                  = shdisp_kerl_ctx.boot_ctx.hw_handset;
     shdisp_user_ctx.hw_revision                 = shdisp_kerl_ctx.boot_ctx.hw_revision;
     shdisp_user_ctx.handset_color               = shdisp_kerl_ctx.boot_ctx.handset_color;
@@ -2018,8 +2028,6 @@ static int shdisp_ioctl_get_context(void __user *argp)
     } else {
         shdisp_user_ctx.log_lv_all              = 0;
     }
-
-    shdisp_semaphore_start();
 
     ret = copy_to_user(argp, &shdisp_user_ctx, sizeof(struct shdisp_to_user_context));
 
@@ -2136,6 +2144,32 @@ static int shdisp_ioctl_set_illumi_triple_color(void __user *argp)
     return SHDISP_RESULT_SUCCESS;
 }
 #endif /* SHDISP_ILLUMI_TRIPLE_COLOR_LED && SHDISP_ANIME_COLOR_LED */
+
+#ifdef SHDISP_PICADJ_USE_QDCM
+static int shdisp_ioctl_get_lut_info(void __user *argp)
+{
+    int ret;
+    struct shdisp_lut_info lut_info;
+
+    shdisp_semaphore_start();
+
+    memset(&lut_info, 0x00, sizeof(lut_info));
+    lut_info.status = shdisp_kerl_ctx.boot_ctx.lut_status;
+    memcpy(&lut_info.lut, &shdisp_kerl_ctx.boot_ctx.gc_lut, sizeof(struct shdisp_gc_lut));
+
+    ret = copy_to_user(argp, &lut_info, sizeof(lut_info));
+
+    shdisp_semaphore_end(__func__);
+
+    if (ret != 0) {
+        SHDISP_ERR("<RESULT_FAILURE> copy_to_user.");
+        return ret;
+    }
+
+    return SHDISP_RESULT_SUCCESS;
+
+}
+#endif /* SHDISP_PICADJ_USE_QDCM */
 
 /* ------------------------------------------------------------------------- */
 /* shdisp_ioctl_bdic_write_reg                                               */

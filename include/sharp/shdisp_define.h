@@ -38,6 +38,7 @@
 #define SHDISP_ILLUMI_COLOR_LED
 
 #define USER_CONFIG_SHDISP_PANEL_HAYABUSA
+#define SHDISP_PICADJ_USE_QDCM
 #define SHDISP_MAIN_WIDTH  1080
 #define SHDISP_MAIN_HEIGHT 1920
 /* ------------------------------------------------------------------------- */
