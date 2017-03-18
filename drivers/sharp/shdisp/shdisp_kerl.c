@@ -402,6 +402,7 @@ static int shdisp_SQE_set_illumi_triple_color(struct shdisp_illumi_triple_color 
 static int shdisp_SQE_set_irq_mask(int irq_msk_ctl);
 static int shdisp_SQE_vcom_tracking(int tracking);
 #ifndef SHDISP_NOT_SUPPORT_DET
+static void shdisp_clear_recovery_lcd_queued(void);
 static void shdisp_SQE_lcd_det_recovery(void);
 #endif  /* SHDISP_NOT_SUPPORT_DET */
 static int shdisp_SQE_psals_recovery(void);
@@ -1317,11 +1318,9 @@ int shdisp_API_is_lcd_det_recovering(void)
 
     SHDISP_TRACE("in.");
 
-    down(&shdisp_sem_req_recovery_lcd);
     if (shdisp_recovery_lcd_queued_flag) {
         ret = true;
     }
-    up(&shdisp_sem_req_recovery_lcd);
 
     SHDISP_TRACE("out ret=%d", ret);
     return ret;
@@ -3383,6 +3382,8 @@ static int shdisp_SQE_main_lcd_display_done(void)
         return SHDISP_RESULT_SUCCESS;
     }
 
+    shdisp_clear_recovery_lcd_queued();
+
     shdisp_lcd_det_recovery_subscribe();
 
     ret = shdisp_SQE_check_recovery();
@@ -4477,6 +4478,11 @@ static void shdisp_SQE_lcd_det_recovery(void)
 
         if (shdisp_SQE_check_recovery() == SHDISP_RESULT_SUCCESS) {
             SHDISP_DEBUG("recovery completed");
+#ifdef CONFIG_SHTERM
+            shterm_k_set_info(SHTERM_INFO_LCDPOW, 1);
+#endif  /* CONFIG_SHTERM */
+
+            shdisp_clear_recovery_lcd_queued();
             shdisp_bdic_API_IRQ_det_irq_ctrl(true);
 
             /* enable REQOUT error interrupt for andy,hayabusa panel */
@@ -4499,6 +4505,8 @@ static void shdisp_SQE_lcd_det_recovery(void)
         }
         SHDISP_WARN("recovery retry(%d)", i);
     }
+
+    shdisp_clear_recovery_lcd_queued();
 
     SHDISP_ERR("recovery retry over");
 #ifdef SHDISP_RESET_LOG
@@ -5132,11 +5140,9 @@ static void shdisp_workqueue_handler_recovery_lcd(struct work_struct *work)
 
     if (temp_callback != NULL) {
         (*temp_callback)();
+    } else {
+        shdisp_clear_recovery_lcd_queued();
     }
-
-    down(&shdisp_sem_req_recovery_lcd);
-    shdisp_recovery_lcd_queued_flag = 0;
-    up(&shdisp_sem_req_recovery_lcd);
 
     shdisp_wake_unlock();
 
@@ -5145,6 +5151,16 @@ static void shdisp_workqueue_handler_recovery_lcd(struct work_struct *work)
 }
 
 #ifndef SHDISP_NOT_SUPPORT_DET
+/* ------------------------------------------------------------------------- */
+/* shdisp_clear_recovery_lcd_queued                                          */
+/* ------------------------------------------------------------------------- */
+static void shdisp_clear_recovery_lcd_queued(void)
+{
+    down(&shdisp_sem_req_recovery_lcd);
+    shdisp_recovery_lcd_queued_flag = 0;
+    up(&shdisp_sem_req_recovery_lcd);
+}
+
 /* ------------------------------------------------------------------------- */
 /* shdisp_lcd_det_recovery                                                   */
 /* ------------------------------------------------------------------------- */
@@ -5174,6 +5190,7 @@ static void shdisp_lcd_det_recovery(void)
     shdisp_semaphore_start();
 
     if (shdisp_kerl_ctx.main_disp_status == SHDISP_MAIN_DISP_OFF) {
+        shdisp_clear_recovery_lcd_queued();
         shdisp_semaphore_end(__func__);
         mdss_shdisp_unlock_recovery();
         mdss_shdisp_unlock_atomic_commit();

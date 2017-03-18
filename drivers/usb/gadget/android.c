@@ -2132,6 +2132,7 @@ static int serial_function_bind_config(struct android_usb_function *f,
 			}
 		}
 	}
+#ifndef CONFIG_USB_ANDROID_SH_SERIALS
 	/*
 	 * Make sure we always have two serials ports initialized to allow
 	 * switching composition from 1 serial function to 2 serial functions.
@@ -2145,6 +2146,7 @@ static int serial_function_bind_config(struct android_usb_function *f,
 		}
 		config->instances_on++;
 	}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 
 	/* limit the serial ports init only for boot ports */
 	if (ports > config->instances_on)

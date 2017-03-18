@@ -1917,7 +1917,7 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 		blank_mode);
 #ifdef CONFIG_SHDISP /* CUST_ID_00051 */
 	if (mfd->index == 0) {
-		mdss_shdisp_lock_recovery();
+		mdss_shdisp_lock_blank();
 	}
 #endif /* CONFIG_SHDISP */
 
@@ -2004,9 +2004,9 @@ static int mdss_fb_blank_sub(int blank_mode, struct fb_info *info,
 
 	ATRACE_END(trace_buffer);
 
-#ifdef CONFIG_SHDISP /*CUST_ID_00051 */
+#ifdef CONFIG_SHDISP /* CUST_ID_00051 */
 	if (mfd->index == 0) {
-		mdss_shdisp_unlock_recovery();
+		mdss_shdisp_unlock_blank();
 	}
 #endif /* CONFIG_SHDISP */
 	return ret;
@@ -3746,9 +3746,9 @@ static int __mdss_fb_display_thread(void *data)
 		MDSS_XLOG(mfd->index, XLOG_FUNC_ENTRY);
 #ifdef CONFIG_SHDISP /* CUST_ID_00051 */
 		if (mfd->index == 0) {
-			mdss_shdisp_lock_recovery();
+			mdss_shdisp_lock_display();
 			ret = __mdss_fb_perform_commit(mfd);
-			mdss_shdisp_unlock_recovery();
+			mdss_shdisp_unlock_display();
 		} else {
 			ret = __mdss_fb_perform_commit(mfd);
 		}

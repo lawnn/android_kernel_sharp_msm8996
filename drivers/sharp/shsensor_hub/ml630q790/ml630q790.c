@@ -534,7 +534,7 @@ module_param(dbg_level, int, 0600);
 /*
    Timeout
  */
-#define WAITEVENT_TIMEOUT            (2000)   /* SHMDS_HUB_0343_01 mod */
+#define WAITEVENT_TIMEOUT            (2000)   /* SHMDS_HUB_0343_01 SHMDS_HUB_0348_01 mod */
 #define WAIT_PEDOEVENT_TIMEOUT       (3000)
 #define WAIT_CHECK_FUP_ERASE         (2000)  /* SHMDS_HUB_0343_01 mod */
 
