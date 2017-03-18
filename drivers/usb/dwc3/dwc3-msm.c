@@ -2815,11 +2815,16 @@ static DEVICE_ATTR(usb_host_running, S_IRUGO, usb_host_running_show, NULL);
 /* 2016.03.15 USB ADD FOR D+/-  Start */
 static enum hrtimer_restart chg_hrtimer_func(struct hrtimer *hrtimer)
 {
+	struct dwc3_msm *mdwc = container_of(hrtimer, struct dwc3_msm, chg_hrtimer);
+
 	pr_err("%s(): Inside timer expired.\n", __func__);
 	pr_err("%s(): DO floating charger update.\n", __func__);
 
-	dwc3_msm_gadget_vbus_draw(the_dwc3_otg, DWC3_IDEV_CHG_MIN);
+	dwc3_msm_gadget_vbus_draw(mdwc, 500);
+#ifdef CONFIG_USB_DWC3_SH_CUST
 	dwc3_otg_change_cable_notify();
+#endif /* CONFIG_USB_DWC3_SH_CUST */
+
 	return HRTIMER_NORESTART;
 }
 /* 2016.03.15 USB ADD FOR D+/-  End */
