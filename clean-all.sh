@@ -41,6 +41,7 @@ else
 fi;
 
 # force regeneration of .dtb and Image files for every compile
+rm -f arch/arm/boot/dts/qcom/*.dtb
 rm -f arch/arm64/boot/*.dtb
 rm -f arch/arm64/boot/dts/*.dtb
 rm -f arch/arm64/boot/dts/samsung/*.dtb
