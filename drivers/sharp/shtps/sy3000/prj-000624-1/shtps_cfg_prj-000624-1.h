@@ -95,7 +95,7 @@
 
 #if defined(SHTPS_MULTI_FW_ENABLE)
 	#include "prj-000624-1/shtps_fw_prj-000624-1_es1.h"
-	#include "prj-000624-1/shtps_fw_prj-000624-1.h"
+	#include "shtps_fw_prj-000624-1.h"
 	
 	typedef struct {
 		unsigned char		hwrev;
@@ -115,7 +115,7 @@
 	};
 	static const int SHTPS_MULTI_FW_INFO_SIZE = sizeof(SHTPS_MULTI_FW_INFO_TBL) / sizeof(shtps_multi_fw_info_t);
 #else
-	#include "prj-000624-1/shtps_fw_prj-000624-1.h"
+	#include "shtps_fw_prj-000624-1.h"
 #endif /* SHTPS_MULTI_FW_ENABLE */
 
 
