@@ -83,7 +83,7 @@ BUILD_NOW()
 	echo "Compiling Kernel.............";
 	if [ ! -f "$KERNELDIR"/.config ]; then
 		if [ "$BUILD_G935D" -eq "1" ]; then
-			cp arch/arm64/configs/lynx_dl90_defconfig .config
+			cp arch/arm64/configs/sh04h_defconfig .config
 		fi;
 	fi;
 
@@ -248,8 +248,8 @@ CLEAN_KERNEL()
 	git checkout firmware/
 }
 
-export KERNEL_CONFIG=lynx_dl90_defconfig
-KERNEL_CONFIG_FILE=lynx_dl90_defconfig
+export KERNEL_CONFIG=sh04h_defconfig
+KERNEL_CONFIG_FILE=sh04h_defconfig
 BUILD_G935D=1;
 BUILD_NOW;
 
