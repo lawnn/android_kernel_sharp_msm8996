@@ -39,6 +39,7 @@
 struct msm_spi_platform_data {
 	u32 max_clock_speed;
 	u32  master_id;
+	u32 bus_width;
 	int (*gpio_config)(void);
 	void (*gpio_release)(void);
 	int (*dma_config)(void);
@@ -52,4 +53,10 @@ struct msm_spi_platform_data {
 	bool rt_priority;
 	bool use_pinctrl;
 	bool is_shared;
+#if defined( CONFIG_SPI_DMA_THRESHOLD_SH )
+	u32  dma_threshold;
+#endif	/* CONFIG_SPI_DMA_THRESHOLD_SH */
+#if defined( CONFIG_SPI_AUTO_SUSPEND_SH )
+	u32  autosuspend_delay;
+#endif	/* CONFIG_SPI_AUTO_SUSPEND_SH */
 };

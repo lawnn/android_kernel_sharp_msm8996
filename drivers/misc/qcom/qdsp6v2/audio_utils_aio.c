@@ -162,10 +162,17 @@ static phys_addr_t audio_aio_ion_fixup(struct q6audio_aio *audio, void *addr,
 				__func__, audio, addr, len);
 		return 0;
 	}
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+	if (ref_up)
+		region->ref_cnt = 1;
+	else
+		region->ref_cnt = 0;
+#else  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 	if (ref_up)
 		region->ref_cnt++;
 	else
 		region->ref_cnt--;
+#endif  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 	pr_debug("%s[%p]:found region %p ref_cnt %d\n",
 			__func__, audio, region, region->ref_cnt);
 	paddr = region->paddr + (addr - region->vaddr);
@@ -211,23 +218,48 @@ static int audio_aio_flush(struct q6audio_aio  *audio)
 		   it is not in pause state */
 		if (!(audio->drv_status & ADRV_STATUS_PAUSE)) {
 			rc = audio_aio_pause(audio);
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+			if (rc < 0) {
+				pr_err("%s[%p}: pause cmd failed rc=%d\n",
+					__func__, audio,
+					rc);
+				goto fail;
+			}
+#else  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 			if (rc < 0)
 				pr_err("%s[%p}: pause cmd failed rc=%d\n",
 					__func__, audio,
 					rc);
+#endif  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 			else
 				audio->drv_status |= ADRV_STATUS_PAUSE;
 		}
 		rc = q6asm_cmd(audio->ac, CMD_FLUSH);
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+		if (rc < 0) {
+			pr_err("%s[%p]: flush cmd failed rc=%d\n",
+				__func__, audio, rc);
+			goto fail;
+		}
+#else  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 		if (rc < 0)
 			pr_err("%s[%p]: flush cmd failed rc=%d\n",
 				__func__, audio, rc);
+#endif  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 		/* Not in stop state, reenable the stream */
 		if (audio->stopped == 0) {
 			rc = audio_aio_enable(audio);
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+			if (rc) {
+				pr_err("%s[%p]:audio re-enable failed\n",
+					__func__, audio);
+				goto fail;
+			}
+#else  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 			if (rc)
 				pr_err("%s[%p]:audio re-enable failed\n",
 					__func__, audio);
+#endif  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 			else {
 				audio->enabled = 1;
 				if (audio->drv_status & ADRV_STATUS_PAUSE)
@@ -242,6 +274,10 @@ static int audio_aio_flush(struct q6audio_aio  *audio)
 	atomic_set(&audio->in_bytes, 0);
 	atomic_set(&audio->in_samples, 0);
 	return 0;
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+fail:
+	return -EINVAL;
+#endif /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 }
 
 static int audio_aio_outport_flush(struct q6audio_aio *audio)
@@ -571,6 +607,17 @@ int audio_aio_release(struct inode *inode, struct file *file)
 	pr_debug("%s[%p]\n", __func__, audio);
 	mutex_lock(&audio->lock);
 	audio->wflush = 1;
+	if (audio->wakelock_voted &&
+		(audio->audio_ws_mgr != NULL) &&
+		(audio->miscdevice != NULL)) {
+		audio->wakelock_voted = false;
+		mutex_lock(&audio->audio_ws_mgr->ws_lock);
+		if ((audio->audio_ws_mgr->ref_cnt > 0) &&
+				(--audio->audio_ws_mgr->ref_cnt == 0)) {
+			pm_relax(audio->miscdevice->this_device);
+		}
+		mutex_unlock(&audio->audio_ws_mgr->ws_lock);
+	}
 	if (audio->enabled)
 		audio_aio_flush(audio);
 	audio->wflush = 0;
@@ -756,7 +803,17 @@ static long audio_aio_process_event_req_common(struct q6audio_aio *audio,
 		pr_debug("%s[%p]:Send flush command to release read buffers"\
 			" held up in DSP\n", __func__, audio);
 		mutex_lock(&audio->lock);
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061*/
+		audio->rflush = 1;
+		audio->wflush = 1;
+		rc = audio_aio_flush(audio);
+		if (rc < 0) {
+			audio->rflush = 0;
+			audio->wflush = 0;
+		}
+#else  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 		audio_aio_flush(audio);
+#endif /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 		mutex_unlock(&audio->lock);
 	}
 
@@ -1175,7 +1232,12 @@ static int audio_aio_buf_add_shared(struct q6audio_aio *audio, u32 dir,
 			return -EINVAL;
 		}
 		/* No EOS reached */
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+		/* No flush in progress */
+		if (!audio->eos_rsp && !audio->rflush) {
+#else  /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 		if (!audio->eos_rsp) {
+#endif /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 			spin_lock_irqsave(&audio->dsp_lock, flags);
 			ret = audio_aio_async_read(audio, buf_node);
 			/* EOS buffer handled in driver */
@@ -1316,6 +1378,10 @@ int audio_aio_open(struct q6audio_aio *audio, struct file *file)
 
 	audio->drv_ops.out_flush(audio);
 	audio->opened = 1;
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+	audio->rflush = 0;
+	audio->wflush = 0;
+#endif /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 	file->private_data = audio;
 	audio->codec_ioctl = audio_aio_ioctl;
 	audio->codec_compat_ioctl = audio_aio_compat_ioctl;
@@ -1386,10 +1452,18 @@ static long audio_aio_shared_ioctl(struct file *file, unsigned int cmd,
 				audio, audio->ac->session);
 		mutex_lock(&audio->lock);
 		audio->stopped = 1;
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+		audio->rflush = 1;
+		audio->wflush = 1;
+#endif /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 		rc = audio_aio_flush(audio);
 		if (rc < 0) {
 			pr_err("%s[%p]:Audio Stop procedure failed rc=%d\n",
 				__func__, audio, rc);
+#ifdef CONFIG_SH_AUDIO_DRIVER /* 21-061 */
+			audio->rflush = 0;
+			audio->wflush = 0;
+#endif /* CONFIG_SH_AUDIO_DRIVER */ /* 21-061 */
 			mutex_unlock(&audio->lock);
 			break;
 		}
@@ -1473,6 +1547,48 @@ static long audio_aio_shared_ioctl(struct file *file, unsigned int cmd,
 		mutex_unlock(&audio->lock);
 		break;
 	}
+	case AUDIO_PM_AWAKE: {
+		if ((audio->audio_ws_mgr ==  NULL) ||
+				(audio->miscdevice == NULL)) {
+			pr_err("%s[%p]: invalid ws_mgr or miscdevice",
+					__func__, audio);
+			rc = -EACCES;
+			break;
+		}
+		pr_debug("%s[%p]:AUDIO_PM_AWAKE\n", __func__, audio);
+		mutex_lock(&audio->lock);
+		if (!audio->wakelock_voted) {
+			audio->wakelock_voted = true;
+			mutex_lock(&audio->audio_ws_mgr->ws_lock);
+			if (audio->audio_ws_mgr->ref_cnt++ == 0)
+				pm_stay_awake(audio->miscdevice->this_device);
+			mutex_unlock(&audio->audio_ws_mgr->ws_lock);
+		}
+		mutex_unlock(&audio->lock);
+		break;
+	}
+	case AUDIO_PM_RELAX: {
+		if ((audio->audio_ws_mgr ==  NULL) ||
+				(audio->miscdevice == NULL)) {
+			pr_err("%s[%p]: invalid ws_mgr or miscdevice",
+					__func__, audio);
+			rc = -EACCES;
+			break;
+		}
+		pr_debug("%s[%p]:AUDIO_PM_RELAX\n", __func__, audio);
+		mutex_lock(&audio->lock);
+		if (audio->wakelock_voted) {
+			audio->wakelock_voted = false;
+			mutex_lock(&audio->audio_ws_mgr->ws_lock);
+			if ((audio->audio_ws_mgr->ref_cnt > 0) &&
+					(--audio->audio_ws_mgr->ref_cnt == 0)) {
+				pm_relax(audio->miscdevice->this_device);
+			}
+			mutex_unlock(&audio->audio_ws_mgr->ws_lock);
+		}
+		mutex_unlock(&audio->lock);
+		break;
+	}
 	default:
 		pr_err("%s: Unknown ioctl cmd = %d", __func__, cmd);
 		rc =  -EINVAL;
@@ -1495,6 +1611,8 @@ static long audio_aio_ioctl(struct file *file, unsigned int cmd,
 	case AUDIO_PAUSE:
 	case AUDIO_FLUSH:
 	case AUDIO_GET_SESSION_ID:
+	case AUDIO_PM_AWAKE:
+	case AUDIO_PM_RELAX:
 		rc = audio_aio_shared_ioctl(file, cmd, arg);
 		break;
 	case AUDIO_GET_STATS: {
@@ -1783,6 +1901,8 @@ static long audio_aio_compat_ioctl(struct file *file, unsigned int cmd,
 	case AUDIO_PAUSE:
 	case AUDIO_FLUSH:
 	case AUDIO_GET_SESSION_ID:
+	case AUDIO_PM_AWAKE:
+	case AUDIO_PM_RELAX:
 		rc = audio_aio_shared_ioctl(file, cmd, arg);
 		break;
 	case AUDIO_GET_STATS_32: {

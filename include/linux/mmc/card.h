@@ -158,6 +158,9 @@ struct sd_switch_caps {
 	unsigned int		hs_max_dtr;
 	unsigned int		uhs_max_dtr;
 #define HIGH_SPEED_MAX_DTR	50000000
+#ifdef CONFIG_MMC_SD_ECO_MODE_CUST_SH
+#define HIGH_SPEED_MAX_DTR_ECO	48000000
+#endif /* MMC_SD_ECO_MODE_CUST_SH */
 #define UHS_SDR104_MAX_DTR	208000000
 #define UHS_SDR50_MAX_DTR	100000000
 #define UHS_DDR50_MAX_DTR	50000000
@@ -382,6 +385,8 @@ struct mmc_card {
 #define MMC_QUIRK_BROKEN_HPI (1 << 13)		/* For devices which gets */
 						/* broken due to HPI feature */
 #define MMC_QUIRK_CACHE_DISABLE (1 << 14)	/* prevent cache enable */
+#define MMC_QUIRK_QCA6574_SETTINGS (1 << 15)	/* QCA6574 card settings*/
+#define MMC_QUIRK_QCA9377_SETTINGS (1 << 16)	/* QCA9377 card settings*/
 
 /* Make sure CMDQ is empty before queuing DCMD */
 #define MMC_QUIRK_CMDQ_EMPTY_BEFORE_DCMD (1 << 17)
@@ -476,7 +481,6 @@ struct mmc_fixup {
 #define CID_MANFID_MICRON	0x13
 #define CID_MANFID_SAMSUNG	0x15
 #define CID_MANFID_KINGSTON	0x70
-#define CID_MANFID_HYNIX	0x90
 
 #define CID_MANFID_ANY (-1u)
 #define CID_OEMID_ANY ((unsigned short) -1)
@@ -674,6 +678,16 @@ static inline bool mmc_card_configured_manual_bkops(const struct mmc_card *c)
 static inline bool mmc_card_configured_auto_bkops(const struct mmc_card *c)
 {
 	return c->ext_csd.bkops_en & EXT_CSD_BKOPS_AUTO_EN;
+}
+
+static inline bool mmc_enable_qca6574_settings(const struct mmc_card *c)
+{
+	return c->quirks & MMC_QUIRK_QCA6574_SETTINGS;
+}
+
+static inline bool mmc_enable_qca9377_settings(const struct mmc_card *c)
+{
+	return c->quirks & MMC_QUIRK_QCA9377_SETTINGS;
 }
 
 #define mmc_card_name(c)	((c)->cid.prod_name)

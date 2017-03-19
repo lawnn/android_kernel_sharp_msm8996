@@ -13,13 +13,25 @@
 #ifndef __IPA_REG_H__
 #define __IPA_REG_H__
 
+/*
+ * IPA HW 3.1 Registers
+ */
+#define IPA_SUSPEND_IRQ_EN_EE_n_ADDR(n) (0x00003034 + 0x1000 * (n))
+#define IPA_SUSPEND_IRQ_CLR_EE_n_ADDR(n) (0x00003038 + 0x1000 * (n))
+/*
+ * End of IPA 3.1 Registers
+ */
+
+/*
+Common Registers
+*/
+
 #define IPA_IRQ_STTS_EE_n_ADDR(n) (0x00003008 + 0x1000 * (n))
-
 #define IPA_IRQ_EN_EE_n_ADDR(n) (0x0000300c + 0x1000 * (n))
-
 #define IPA_IRQ_CLR_EE_n_ADDR(n) (0x00003010 + 0x1000 * (n))
 
-#define IPA_IRQ_SUSPEND_INFO_EE_n_ADDR(n) (0x00003098 + 0x1000 * (n))
+#define IPA_IRQ_SUSPEND_INFO_EE_n_ADDR_v3_0(n) (0x00003098 + 0x1000 * (n))
+#define IPA_IRQ_SUSPEND_INFO_EE_n_ADDR_v3_1(n) (0x00003030 + 0x1000 * (n))
 
 #define IPA_BCR_OFST 0x000001D0
 #define IPA_COUNTER_CFG_OFST 0x000001f0
@@ -222,7 +234,6 @@
 #define IPA_SRC_RSRC_GRP_45_RSRC_TYPE_n(n) (0x00000408 + 0x20 * (n))
 #define IPA_SRC_RSRC_GRP_67_RSRC_TYPE_n(n) (0x0000040C + 0x20 * (n))
 
-
 #define IPA_DST_RSRC_GRP_01_RSRC_TYPE_n(n) (0x00000500 + 0x20 * (n))
 #define IPA_DST_RSRC_GRP_23_RSRC_TYPE_n(n) (0x00000504 + 0x20 * (n))
 #define IPA_DST_RSRC_GRP_45_RSRC_TYPE_n(n) (0x00000508 + 0x20 * (n))
@@ -236,6 +247,14 @@
 #define IPA_RSRC_GRP_XY_RSRC_TYPE_n_X_MAX_LIM_SHFT 8
 #define IPA_RSRC_GRP_XY_RSRC_TYPE_n_X_MIN_LIM_BMSK 0xFF
 #define IPA_RSRC_GRP_XY_RSRC_TYPE_n_X_MIN_LIM_SHFT 0
+
+#define IPA_RX_HPS_CLIENTS_MIN_DEPTH_0 0x000023C4
+#define IPA_RX_HPS_CLIENTS_MIN_DEPTH_1 0x000023C8
+#define IPA_RX_HPS_CLIENTS_MAX_DEPTH_0 0x000023CC
+#define IPA_RX_HPS_CLIENTS_MAX_DEPTH_1 0x000023D0
+
+#define IPA_RX_HPS_CLIENTS_MINMAX_DEPTH_X_CLIENT_n_BMSK(n) (0x7F << (8 * (n)))
+#define IPA_RX_HPS_CLIENTS_MINMAX_DEPTH_X_CLIENT_n_SHFT(n) (8 * (n))
 
 #define IPA_IRQ_EE_UC_n_OFFS(n) (0x0000301c + 0x1000 * (n))
 
@@ -289,5 +308,11 @@
 #define IPA_ENDP_INIT_SEQ_n_DPS_SEQ_TYPE_SHFT 0x4
 #define IPA_ENDP_INIT_SEQ_n_HPS_SEQ_TYPE_BMSK 0xf
 #define IPA_ENDP_INIT_SEQ_n_HPS_SEQ_TYPE_SHFT 0x0
+
+#define IPA_ENDP_GSI_CFG_TLV_n_OFST(n) (0x850 + 0x70 * (n))
+#define IPA_ENDP_GSI_CFG_AOS_n_OFST(n) (0x854 + 0x70 * (n))
+#define IPA_ENDP_GSI_CFG2_n_OFST(n) (0x858 + 0x70 * (n))
+#define IPA_ENDP_GSI_CFG1_n_OFST(n) (0x5504 + 0x4 * (n))
+#define IPA_ENABLE_GSI_OFST 0x5500
 
 #endif

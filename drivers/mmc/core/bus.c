@@ -25,6 +25,10 @@
 #include "sdio_cis.h"
 #include "bus.h"
 
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+#include "../card/sh_sd_battlog.h"
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
+
 #define to_mmc_driver(d)	container_of(d, struct mmc_driver, drv)
 
 static ssize_t type_show(struct device *dev,
@@ -410,6 +414,12 @@ void mmc_remove_card(struct mmc_card *card)
 			pr_info("%s: card %04x removed\n",
 				mmc_hostname(card->host), card->rca);
 		}
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+		if (mmc_detection_status_check(card->host))
+			mmc_post_detection(card->host, SD_SOFT_REMOVED);
+		else
+			mmc_post_detection(card->host, SD_PHY_REMOVED);
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 		device_del(&card->dev);
 	}
 

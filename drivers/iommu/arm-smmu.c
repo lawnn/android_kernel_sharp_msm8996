@@ -41,6 +41,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/notifier.h>
 
 #include <linux/amba/bus.h>
 #include <soc/qcom/msm_tz_smmu.h>
@@ -141,7 +142,7 @@
 #define ARM_SMMU_GR0_sTLBGSYNC		0x70
 #define ARM_SMMU_GR0_sTLBGSTATUS	0x74
 #define sTLBGSTATUS_GSACTIVE		(1 << 0)
-#define TLB_LOOP_TIMEOUT		1000000	/* 1s! */
+#define TLB_LOOP_TIMEOUT		500000	/* 500ms */
 
 /* Stream mapping registers */
 #define ARM_SMMU_GR0_SMR(n)		(0x800 + ((n) << 2))
@@ -359,6 +360,7 @@ struct arm_smmu_device {
 #define ARM_SMMU_OPT_NO_M		(1 << 8)
 #define ARM_SMMU_OPT_NO_SMR_CHECK	(1 << 9)
 #define ARM_SMMU_OPT_DYNAMIC		(1 << 10)
+#define ARM_SMMU_OPT_HALT		(1 << 11)
 	u32				options;
 	enum arm_smmu_arch_version	version;
 
@@ -385,6 +387,7 @@ struct arm_smmu_device {
 	struct clk			**clocks;
 
 	struct regulator		*gdsc;
+	struct notifier_block		regulator_nb;
 
 	/* Protects against domains attaching to the same SMMU concurrently */
 	struct mutex			attach_lock;
@@ -449,6 +452,7 @@ struct arm_smmu_domain {
 	struct list_head		unassign_list;
 	struct mutex			assign_lock;
 	struct list_head		secure_pool_list;
+	bool				non_fatal_faults;
 };
 
 static struct iommu_ops arm_smmu_ops;
@@ -473,6 +477,7 @@ static struct arm_smmu_option_prop arm_smmu_options[] = {
 	{ ARM_SMMU_OPT_NO_M, "qcom,no-mmu-enable" },
 	{ ARM_SMMU_OPT_NO_SMR_CHECK, "qcom,no-smr-check" },
 	{ ARM_SMMU_OPT_DYNAMIC, "qcom,dynamic" },
+	{ ARM_SMMU_OPT_HALT, "qcom,enable-smmu-halt"},
 	{ 0, NULL},
 };
 
@@ -506,7 +511,7 @@ static void parse_driver_options(struct arm_smmu_device *smmu)
 		if (of_property_read_bool(smmu->dev->of_node,
 						arm_smmu_options[i].prop)) {
 			smmu->options |= arm_smmu_options[i].opt;
-			dev_notice(smmu->dev, "option %s\n",
+			dev_dbg(smmu->dev, "option %s\n",
 				arm_smmu_options[i].prop);
 		}
 	} while (arm_smmu_options[++i].opt);
@@ -1162,6 +1167,7 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 	void __iomem *gr1_base;
 	phys_addr_t phys_soft;
 	u32 frsynra;
+	bool non_fatal_fault = smmu_domain->non_fatal_faults;
 
 	static DEFINE_RATELIMIT_STATE(_rs,
 				      DEFAULT_RATELIMIT_INTERVAL,
@@ -1250,12 +1256,21 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 				(fsr & 0x80000000) ? "MULTI " : "");
 			dev_err(smmu->dev,
 				"soft iova-to-phys=%pa\n", &phys_soft);
+			if (!phys_soft)
+				dev_err(smmu->dev,
+					"SOFTWARE TABLE WALK FAILED! Looks like %s accessed an unmapped address!\n",
+					dev_name(smmu->dev));
 			dev_err(smmu->dev,
 				"hard iova-to-phys (ATOS)=%pa\n", &phys_atos);
-			dev_err(smmu->dev, "SID=0x%x\n", frsynra & 0x1FF);
+			dev_err(smmu->dev, "SID=0x%x\n", frsynra & 0xffff);
 		}
 		ret = IRQ_NONE;
 		resume = RESUME_TERMINATE;
+		if (!non_fatal_fault) {
+			dev_err(smmu->dev,
+				"Unhandled context faults are fatal on this domain. Going down now...\n");
+			BUG();
+		}
 	}
 
 	/*
@@ -1348,6 +1363,8 @@ static void arm_smmu_trigger_fault(struct iommu_domain *domain,
 	dev_err(smmu->dev, "Writing 0x%lx to FSRRESTORE on cb %d\n",
 		flags, cfg->cbndx);
 	writel_relaxed(flags, cb_base + ARM_SMMU_CB_FSRRESTORE);
+	/* give the interrupt time to fire... */
+	msleep(1000);
 	arm_smmu_disable_clocks(smmu);
 }
 
@@ -2667,6 +2684,11 @@ static int arm_smmu_domain_get_attr(struct iommu_domain *domain,
 					& (1 << DOMAIN_ATTR_DYNAMIC));
 		ret = 0;
 		break;
+	case DOMAIN_ATTR_NON_FATAL_FAULTS:
+		*((int *)data) = !!(smmu_domain->attributes
+				    & (1 << DOMAIN_ATTR_NON_FATAL_FAULTS));
+		ret = 0;
+		break;
 	default:
 		ret = -ENODEV;
 		break;
@@ -2772,6 +2794,10 @@ static int arm_smmu_domain_set_attr(struct iommu_domain *domain,
 
 		/* this will be validated during attach */
 		smmu_domain->cfg.cbndx = *((unsigned int *)data);
+		ret = 0;
+		break;
+	case DOMAIN_ATTR_NON_FATAL_FAULTS:
+		smmu_domain->non_fatal_faults = *((int *)data);
 		ret = 0;
 		break;
 	default:
@@ -2901,6 +2927,56 @@ static int arm_smmu_id_size_to_bits(int size)
 	default:
 		return 48;
 	}
+}
+
+static int regulator_notifier(struct notifier_block *nb,
+		unsigned long event, void *data)
+{
+	int ret = 0;
+	struct arm_smmu_device *smmu = container_of(nb,
+					struct arm_smmu_device, regulator_nb);
+
+	/* Ignore EVENT DISABLE as no clocks could be turned on
+	 * at this notification.
+	*/
+	if (event != REGULATOR_EVENT_PRE_DISABLE &&
+				event != REGULATOR_EVENT_ENABLE)
+		return NOTIFY_OK;
+
+	ret = arm_smmu_prepare_clocks(smmu);
+	if (ret)
+		goto out;
+
+	ret = arm_smmu_enable_clocks_atomic(smmu);
+	if (ret)
+		goto unprepare_clock;
+
+	if (event == REGULATOR_EVENT_PRE_DISABLE)
+		arm_smmu_halt(smmu);
+	else if (event == REGULATOR_EVENT_ENABLE)
+		arm_smmu_resume(smmu);
+
+	arm_smmu_disable_clocks_atomic(smmu);
+unprepare_clock:
+	arm_smmu_unprepare_clocks(smmu);
+out:
+	return NOTIFY_OK;
+}
+
+static int register_regulator_notifier(struct arm_smmu_device *smmu)
+{
+	struct device *dev = smmu->dev;
+	int ret = 0;
+
+	if (smmu->options & ARM_SMMU_OPT_HALT) {
+		smmu->regulator_nb.notifier_call = regulator_notifier;
+		ret = regulator_register_notifier(smmu->gdsc,
+						&smmu->regulator_nb);
+
+		if (ret)
+			dev_err(dev, "Regulator notifier request failed\n");
+	}
+	return ret;
 }
 
 static int arm_smmu_init_regulators(struct arm_smmu_device *smmu)
@@ -3045,8 +3121,8 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 	void __iomem *gr0_base = ARM_SMMU_GR0(smmu);
 	u32 id;
 
-	dev_notice(smmu->dev, "probing hardware configuration...\n");
-	dev_notice(smmu->dev, "SMMUv%d with:\n", smmu->version);
+	dev_dbg(smmu->dev, "probing hardware configuration...\n");
+	dev_dbg(smmu->dev, "SMMUv%d with:\n", smmu->version);
 
 	/* ID0 */
 	id = readl_relaxed(gr0_base + ARM_SMMU_GR0_ID0);
@@ -3059,17 +3135,17 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 
 	if (id & ID0_S1TS) {
 		smmu->features |= ARM_SMMU_FEAT_TRANS_S1;
-		dev_notice(smmu->dev, "\tstage 1 translation\n");
+		dev_dbg(smmu->dev, "\tstage 1 translation\n");
 	}
 
 	if (id & ID0_S2TS) {
 		smmu->features |= ARM_SMMU_FEAT_TRANS_S2;
-		dev_notice(smmu->dev, "\tstage 2 translation\n");
+		dev_dbg(smmu->dev, "\tstage 2 translation\n");
 	}
 
 	if (id & ID0_NTS) {
 		smmu->features |= ARM_SMMU_FEAT_TRANS_NESTED;
-		dev_notice(smmu->dev, "\tnested translation\n");
+		dev_dbg(smmu->dev, "\tnested translation\n");
 	}
 
 	if (!(smmu->features &
@@ -3080,12 +3156,12 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 
 	if (smmu->version == 1 || (!(id & ID0_ATOSNS) && (id & ID0_S1TS))) {
 		smmu->features |= ARM_SMMU_FEAT_TRANS_OPS;
-		dev_notice(smmu->dev, "\taddress translation ops\n");
+		dev_dbg(smmu->dev, "\taddress translation ops\n");
 	}
 
 	if (id & ID0_CTTW) {
 		smmu->features |= ARM_SMMU_FEAT_COHERENT_WALK;
-		dev_notice(smmu->dev, "\tcoherent table walk\n");
+		dev_dbg(smmu->dev, "\tcoherent table walk\n");
 	}
 
 	if (id & ID0_SMS) {
@@ -3116,9 +3192,9 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 			}
 		}
 
-		dev_notice(smmu->dev,
-			   "\tstream matching with %u register groups, mask 0x%x",
-			   smmu->num_mapping_groups, mask);
+		dev_dbg(smmu->dev,
+			"\tstream matching with %u register groups, mask 0x%x",
+			smmu->num_mapping_groups, mask);
 	} else {
 		smmu->num_mapping_groups = (id >> ID0_NUMSIDB_SHIFT) &
 					   ID0_NUMSIDB_MASK;
@@ -3142,8 +3218,8 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 		dev_err(smmu->dev, "impossible number of S2 context banks!\n");
 		return -ENODEV;
 	}
-	dev_notice(smmu->dev, "\t%u context banks (%u stage-2 only)\n",
-		   smmu->num_context_banks, smmu->num_s2_context_banks);
+	dev_dbg(smmu->dev, "\t%u context banks (%u stage-2 only)\n",
+		smmu->num_context_banks, smmu->num_s2_context_banks);
 
 	/* ID2 */
 	id = readl_relaxed(gr0_base + ARM_SMMU_GR0_ID2);
@@ -3181,15 +3257,15 @@ static int arm_smmu_device_cfg_probe(struct arm_smmu_device *smmu)
 	}
 
 	arm_smmu_ops.pgsize_bitmap &= size;
-	dev_notice(smmu->dev, "\tSupported page sizes: 0x%08lx\n", size);
+	dev_dbg(smmu->dev, "\tSupported page sizes: 0x%08lx\n", size);
 
 	if (smmu->features & ARM_SMMU_FEAT_TRANS_S1)
-		dev_notice(smmu->dev, "\tStage-1: %lu-bit VA -> %lu-bit IPA\n",
-			   smmu->va_size, smmu->ipa_size);
+		dev_dbg(smmu->dev, "\tStage-1: %lu-bit VA -> %lu-bit IPA\n",
+			smmu->va_size, smmu->ipa_size);
 
 	if (smmu->features & ARM_SMMU_FEAT_TRANS_S2)
-		dev_notice(smmu->dev, "\tStage-2: %lu-bit IPA -> %lu-bit PA\n",
-			   smmu->ipa_size, smmu->pa_size);
+		dev_dbg(smmu->dev, "\tStage-2: %lu-bit IPA -> %lu-bit PA\n",
+			smmu->ipa_size, smmu->pa_size);
 
 	return 0;
 }
@@ -3277,7 +3353,7 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 	if (err)
 		goto out_put_masters;
 
-	dev_notice(dev, "registered %d master devices\n", num_masters);
+	dev_dbg(dev, "registered %d master devices\n", num_masters);
 
 	err = arm_smmu_parse_impl_def_registers(smmu);
 	if (err)
@@ -3330,6 +3406,10 @@ static int arm_smmu_device_dt_probe(struct platform_device *pdev)
 	}
 
 	idr_init(&smmu->asid_idr);
+
+	err = register_regulator_notifier(smmu);
+	if (err)
+		goto out_free_irqs;
 
 	INIT_LIST_HEAD(&smmu->list);
 	spin_lock(&arm_smmu_devices_lock);

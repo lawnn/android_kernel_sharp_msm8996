@@ -1,7 +1,7 @@
 config ARM64
 	def_bool y
-	select ARCH_BINFMT_ELF_RANDOMIZE_PIE
 	select ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE
+	select ARCH_HAS_ELF_RANDOMIZE
 	select ARCH_HAS_SG_CHAIN
 	select ARCH_HAS_TICK_BROADCAST if GENERIC_CLOCKEVENTS_BROADCAST
 	select ARCH_USE_CMPXCHG_LOCKREF
@@ -15,6 +15,7 @@ config ARM64
 	select ARM_GIC
 	select AUDIT_ARCH_COMPAT_GENERIC
 	select ARM_GIC_V3
+	select ARM_GIC_V3_ITS if PCI_MSI
 	select BUILDTIME_EXTABLE_SORT
 	select CLONE_BACKWARDS
 	select COMMON_CLK if !ARCH_MSM
@@ -39,6 +40,7 @@ config ARM64
 	select HAVE_ALIGNED_STRUCT_PAGE if SLUB
 	select HAVE_ARCH_AUDITSYSCALL
 	select HAVE_ARCH_JUMP_LABEL
+	select HAVE_ARCH_KASAN if SPARSEMEM_VMEMMAP
 	select HAVE_ARCH_KGDB
 	select HAVE_ARCH_SECCOMP_FILTER
 	select HAVE_ARCH_TRACEHOOK
@@ -172,6 +174,13 @@ config KERNEL_MODE_NEON
 config FIX_EARLYCON_MEM
 	def_bool y
 
+config PGTABLE_LEVELS
+	int
+	default 2 if ARM64_64K_PAGES && ARM64_VA_BITS_42
+	default 3 if ARM64_64K_PAGES && ARM64_VA_BITS_48
+	default 3 if ARM64_4K_PAGES && ARM64_VA_BITS_39
+	default 4 if ARM64_4K_PAGES && ARM64_VA_BITS_48
+
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
@@ -232,6 +241,13 @@ config ARCH_MSM8916
 	  This enables support for the MSM8916 chipset. If you don't
 	  know what to do here, say N
 
+config ARCH_MSMGOLD
+	bool "Enable Support for Qualcomm Technologies Inc MSMGOLD"
+	depends on ARCH_MSM
+	help
+	  This enables support for the MSMGOLD chipset. If you don't
+	  know what to do here, say N
+
 config ARCH_MSMTITANIUM
 	bool "Enable Support for Qualcomm Technologies Inc MSMTITANIUM"
 	depends on ARCH_MSM
@@ -239,11 +255,11 @@ config ARCH_MSMTITANIUM
 	  This enables support for the MSMTITANIUM chipset. If you don't
 	  know what to do here, say N
 
-config ARCH_MSMTHORIUM
-	bool "Enable Support for Qualcomm Technologies Inc MSMTHORIUM"
+config ARCH_MSM8937
+	bool "Enable Support for Qualcomm Technologies Inc MSM8937"
 	depends on ARCH_MSM
 	help
-	  This enables support for the MSMTHORIUM chipset. If you don't
+	  This enables support for the MSM8937 chipset. If you don't
 	  know what to do here, say N
 
 config ARCH_MSM8996
@@ -268,6 +284,30 @@ config ARCH_MSM8994_V1_TLBI_WA
 	  workaround is required for MSM8994 V1 revision where the
 	  [39:38] bits of VA are tied to zero and due to which TLBI
 	  operations with VA or ASID will not work.
+
+config ARCH_LISALISA
+	depends on ARCH_MSM8996
+	bool "SHARP LISALISA"
+	help
+	  Support for Sharp lisalisa
+
+config ARCH_LYNX_DL90
+	depends on ARCH_MSM8996
+	bool "SHARP DL90"
+	help
+	  Support for Sharp dl90
+
+config ARCH_PA32
+	depends on ARCH_MSM8996
+	bool "SHARP PA32"
+	help
+	  Support for Sharp pa32
+
+config ARCH_DECKARD_AL40
+	depends on ARCH_MSM8996
+	bool "SHARP AL40"
+	help
+	  Support for Sharp al40
 
 endmenu
 
@@ -528,13 +568,6 @@ config ARM64_VA_BITS
 	default 39 if ARM64_VA_BITS_39
 	default 42 if ARM64_VA_BITS_42
 	default 48 if ARM64_VA_BITS_48
-
-config ARM64_PGTABLE_LEVELS
-	int
-	default 2 if ARM64_64K_PAGES && ARM64_VA_BITS_42
-	default 3 if ARM64_64K_PAGES && ARM64_VA_BITS_48
-	default 3 if ARM64_4K_PAGES && ARM64_VA_BITS_39
-	default 4 if ARM64_4K_PAGES && ARM64_VA_BITS_48
 
 config CPU_BIG_ENDIAN
        bool "Build big-endian kernel"
@@ -927,3 +960,22 @@ endif
 source "lib/Kconfig"
 
 source "arch/arm64/mm/Kconfig"
+
+config SHSYS_CUST
+       bool "SHARP SYSTEM CUSTOMIZE"
+       default n
+
+config SHSYS_CUST_DEBUG
+	depends on SHSYS_CUST
+	default y
+	bool "SHARP SYSTEM CUSTOMIZE DEBUG"
+
+config SH_SLEEP_LOG
+       bool "SHARP CUSTOMIZE SLEEP LOG"
+       default y
+
+config SH_SHUTDOWN_FAILSAFE
+	bool "SHARP CUSTOMIZE Shutdown fail safe"
+	default y
+	help
+	 for shutdown fail safe

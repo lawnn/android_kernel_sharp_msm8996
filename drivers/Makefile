@@ -121,6 +121,7 @@ obj-y				+= mmc/
 obj-$(CONFIG_MEMSTICK)		+= memstick/
 obj-y				+= leds/
 obj-$(CONFIG_SWITCH)		+= switch/
+obj-$(CONFIG_SHTIMER)		+= sharp/shtimer/
 obj-$(CONFIG_INFINIBAND)	+= infiniband/
 obj-$(CONFIG_SGI_SN)		+= sn/
 obj-y				+= firmware/
@@ -141,6 +142,16 @@ obj-$(CONFIG_STAGING)		+= staging/
 obj-y				+= platform/
 #common clk code
 obj-y				+= clk/
+obj-$(CONFIG_SHSYS_CUST)	+= sharp/shsys/
+obj-$(CONFIG_SHTERM)		+= sharp/shterm/
+obj-$(CONFIG_SHBOOT_CUST)	+= sharp/shboot/
+obj-$(CONFIG_SHDIAG)		+= sharp/shdiag/
+obj-$(CONFIG_BATTERY_SH)	+= sharp/shbatt/
+obj-$(CONFIG_SHDISP)        += sharp/shdisp/
+obj-$(CONFIG_SENSORS_PROXIMITY) += sharp/proximity/
+#/* SH_AUDIO_DRIVER -> */ /* 21-002 */
+obj-$(CONFIG_SH_AUDIO_SMARTAMP) += sharp/shaudio/
+#/* SH_AUDIO_DRIVER <- */ /* 21-002 */
 
 obj-$(CONFIG_MAILBOX)		+= mailbox/
 obj-$(CONFIG_HWSPINLOCK)	+= hwspinlock/
@@ -168,8 +179,23 @@ obj-$(CONFIG_CORESIGHT)		+= coresight/
 obj-$(CONFIG_ESOC)		+= esoc/
 
 obj-$(CONFIG_BIF)		+= bif/
+obj-$(CONFIG_SHUB)		+= sharp/shsensor_hub/ml630q790/
 
 obj-$(CONFIG_SENSORS_SSC)	+= sensors/
 
 # <t-base drivers
 obj-$(CONFIG_MOBICORE_DRIVER)	+= gud/
+
+obj-$(CONFIG_TOUCHSCREEN_SHTPS) += sharp/shtps/
+# NFC/FeliCa driver
+obj-$(CONFIG_TOSHIBA_NFC)	+= sharp/nfc/
+obj-$(CONFIG_SH_FLIP_SWITCH) += sharp/shflip/
+
+obj-$(CONFIG_SENSOR_SHGRIP)	+= sharp/shgrip/
+obj-$(CONFIG_SHVOLD_KILLPROCESS) += sharp/vold/
+
+obj-$(CONFIG_DTV_TUNERDEV_TMM)	+= sharp/tunerdrv_tmm/
+
+obj-$(CONFIG_SHLOG_SYSTEM)      += sharp/shlog/
+
+obj-$(CONFIG_SENSORS_FINGERPRINT) += sharp/shfpsensor/

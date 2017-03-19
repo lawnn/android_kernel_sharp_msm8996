@@ -58,6 +58,15 @@ static struct usb_gadget_strings **get_containers_gs(
 {
 	return (struct usb_gadget_strings **)uc->stash;
 }
+#ifdef CONFIG_USB_ANDROID_SH_MTP
+#define USB_MS_OS_DESCRIPTOR_ID			(0xEE)
+#endif /* CONFIG_USB_ANDROID_SH_MTP */
+
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+#define D_USB_CHARGE_MAX_POWER			(500)
+#define D_USB_DISCHARGE_MAX_POWER_DRAW		(0)
+#define D_USB_DISCHARGE_MAX_POWER_DESC		(100/2)
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 
 /**
  * next_ep_desc() - advance to the next EP descriptor
@@ -462,8 +471,16 @@ EXPORT_SYMBOL_GPL(usb_func_ep_queue);
 static u8 encode_bMaxPower(enum usb_device_speed speed,
 		struct usb_configuration *c)
 {
-	unsigned val = CONFIG_USB_GADGET_VBUS_DRAW;
+	unsigned val;
 
+	if (c->MaxPower)
+	        val = c->MaxPower;
+	else
+#ifndef CONFIG_USB_ANDROID_SH_CUST
+	val = CONFIG_USB_GADGET_VBUS_DRAW;
+#else /* CONFIG_USB_ANDROID_SH_CUST */
+	val = D_USB_DISCHARGE_MAX_POWER_DESC;
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 	switch (speed) {
 	case USB_SPEED_SUPER:
 		/* with super-speed report 900mA */
@@ -542,6 +559,9 @@ static int config_desc(struct usb_composite_dev *cdev, unsigned w_value)
 	struct list_head		*pos;
 	u8				type = w_value >> 8;
 	enum usb_device_speed		speed = USB_SPEED_UNKNOWN;
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+	int selfpowered = 1;
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 
 	if (gadget->speed == USB_SPEED_SUPER)
 		speed = gadget->speed;
@@ -556,6 +576,9 @@ static int config_desc(struct usb_composite_dev *cdev, unsigned w_value)
 
 	}
 
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+	selfpowered = usb_gadget_is_selfpowered(gadget);
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 	/* This is a lookup by config *INDEX* */
 	w_value &= 0xff;
 
@@ -587,8 +610,23 @@ check_config:
 				continue;
 		}
 
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+		if (w_value == 0) {
+			if (selfpowered == 0) {
+				c->bmAttributes &= ~USB_CONFIG_ATT_SELFPOWER;
+				c->MaxPower = D_USB_CHARGE_MAX_POWER;
+			}
+			else {
+				c->bmAttributes |= USB_CONFIG_ATT_SELFPOWER;
+				c->MaxPower = D_USB_DISCHARGE_MAX_POWER_DRAW;
+			}
+
+			return config_buf(c, speed, cdev->req->buf, type);
+		}
+#else /* CONFIG_USB_ANDROID_SH_CUST */
 		if (w_value == 0)
 			return config_buf(c, speed, cdev->req->buf, type);
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 		w_value--;
 	}
 	return -EINVAL;
@@ -778,9 +816,11 @@ static int set_config(struct usb_composite_dev *cdev,
 		result = 0;
 	}
 
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 	INFO(cdev, "%s config #%d: %s\n",
 	     usb_speed_string(gadget->speed),
 	     number, c ? c->label : "unconfigured");
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 
 	if (!c)
 		goto done;
@@ -1203,6 +1243,11 @@ int usb_string_id(struct usb_composite_dev *cdev)
 		 * supported languages */
 		/* 255 reserved as well? -- mina86 */
 		cdev->next_string_id++;
+#ifdef CONFIG_USB_ANDROID_SH_MTP
+		/* it is reserved too */
+		if (cdev->next_string_id == USB_MS_OS_DESCRIPTOR_ID) 
+			cdev->next_string_id++;
+#endif /* CONFIG_USB_ANDROID_SH_MTP */
 		return cdev->next_string_id;
 	}
 	return -ENODEV;
@@ -1301,7 +1346,6 @@ static struct usb_gadget_string_container *find_gadget_strings(
 	list_for_each_entry(uc, &cdev->gstrings, list) {
 		struct usb_gadget_strings **org_gs;
 		struct usb_string *org_s, *s;
-		int i;
 
 		org_gs = get_containers_gs(uc);
 
@@ -1315,15 +1359,11 @@ static struct usb_gadget_string_container *find_gadget_strings(
 		org_s = org_gs[0]->strings;
 		s = sp[0]->strings;
 
-		for (i = 0; i < n_strings; i++) {
-			if ((s->s != org_s->s) && !(!s->s && *org_s->s == '\0'))
-				break;
-
-			org_s++;
-			s++;
-		}
-
-		if (i == n_strings)
+		/*
+		 * only check the first string of the function since it's not
+		 * likely that a set of strings matches but not other
+		 */
+		if (s->s == org_s->s)
 			return uc;
 	}
 

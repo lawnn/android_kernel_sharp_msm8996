@@ -176,6 +176,9 @@ enum msm_flash_cfg_type_t {
 	CFG_FLASH_RELEASE,
 	CFG_FLASH_OFF,
 	CFG_FLASH_LOW,
+/* SHLOCAL_CAMERA_IMAGE_QUALITY-> *//* flash customize */
+	CFG_FLASH_PREFLASH,
+/* SHLOCAL_CAMERA_IMAGE_QUALITY<- */
 	CFG_FLASH_HIGH,
 };
 

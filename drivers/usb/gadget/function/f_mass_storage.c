@@ -268,6 +268,7 @@ static int csw_sent;
 struct fsg_dev;
 struct fsg_common;
 
+#ifndef CONFIG_USB_ANDROID_SH_CUST
 /* Data shared by all the FSG instances. */
 struct fsg_common {
 	struct usb_gadget	*gadget;
@@ -331,6 +332,7 @@ struct fsg_common {
 	struct kref		ref;
 	struct timer_list	vfs_timer;
 };
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 
 struct fsg_dev {
 	struct usb_function	function;
@@ -3191,11 +3193,13 @@ int fsg_common_create_lun(struct fsg_common *common, struct fsg_lun_config *cfg,
 				p = "(error)";
 		}
 	}
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 	pr_info("LUN: %s%s%sfile: %s\n",
 	      lun->removable ? "removable " : "",
 	      lun->ro ? "read only " : "",
 	      lun->cdrom ? "CD-ROM " : "",
 	      p);
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 	kfree(pathbuf);
 
 	return 0;
@@ -3811,8 +3815,9 @@ static struct usb_function_instance *fsg_alloc_inst(void)
 	if (rc)
 		goto release_luns;
 
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 	pr_info(FSG_DRIVER_DESC ", version: " FSG_DRIVER_VERSION "\n");
-
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 	memset(&config, 0, sizeof(config));
 	config.removable = true;
 	rc = fsg_common_create_lun(opts->common, &config, 0, "lun.0",

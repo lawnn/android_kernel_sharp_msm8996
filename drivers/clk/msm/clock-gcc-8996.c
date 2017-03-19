@@ -970,6 +970,17 @@ static struct rcg_clk blsp2_qup5_i2c_apps_clk_src = {
 
 static struct clk_freq_tbl ftbl_blsp2_qup5_spi_apps_clk_src[] = {
 	F(    960000,         cxo_clk_src,   10,    1,     2),
+#if defined( CONFIG_SHUB_ML630Q790 )
+	F(   1100000, gpll0_out_main,    5,    1,   109),
+	F(   1920000,    cxo_clk_src,   10,    1,     0),
+	F(   2000000, gpll0_out_main,   10,    1,    30),
+	F(   2400000,    cxo_clk_src,    8,    1,     0),
+	F(   3000000, gpll0_out_main,   10,    1,    20),
+	F(   3200000,    cxo_clk_src,    2,    1,     3),
+	F(   3400000, gpll0_out_main,    8,    1,    22),
+	F(   3750000, gpll0_out_main,   10,    1,    16),
+	F(   4000000, gpll0_out_main,   10,    1,    15),
+#endif	/* #if defined( CONFIG_SHUB_ML630Q790 ) */
 	F(   4800000,         cxo_clk_src,    4,    0,     0),
 	F(   9600000,         cxo_clk_src,    2,    0,     0),
 	F(  15000000, gpll0_out_main,   10,    1,     4),
@@ -1014,7 +1025,23 @@ static struct rcg_clk blsp2_qup6_i2c_apps_clk_src = {
 };
 
 static struct clk_freq_tbl ftbl_blsp2_qup6_spi_apps_clk_src[] = {
+#if defined( CONFIG_SHTPS_SY3X00_DEV )
+	F(    400000,         cxo_clk_src,   12,    1,     4),
+	F(    600000,         cxo_clk_src,    8,    1,     4),
+	F(    800000,         cxo_clk_src,   12,    1,     2),
+#endif  /* #if defined( CONFIG_SHTPS_SY3X00_DEV ) */
 	F(    960000,         cxo_clk_src,   10,    1,     2),
+#if defined( CONFIG_SHTPS_SY3X00_DEV )
+	F(   1100000, gpll0_out_main,    5,    1,   109),
+	F(   1920000,         cxo_clk_src,   10,    1,     0),
+	F(   2000000, gpll0_out_main,   10,    1,    30),
+	F(   2400000,         cxo_clk_src,    8,    1,     0),
+	F(   3000000, gpll0_out_main,   10,    1,    20),
+	F(   3200000,         cxo_clk_src,    2,    1,     3),
+	F(   3400000, gpll0_out_main,    8,    1,    22),
+	F(   3750000, gpll0_out_main,   10,    1,    16),
+	F(   4000000, gpll0_out_main,   10,    1,    15),
+#endif	/* #if defined( CONFIG_SHTPS_SY3X00_DEV ) */
 	F(   4800000,         cxo_clk_src,    4,    0,     0),
 	F(   9600000,         cxo_clk_src,    2,    0,     0),
 	F(  15000000, gpll0_out_main,   10,    1,     4),
@@ -1409,6 +1436,19 @@ static struct rcg_clk sdcc1_ice_core_clk_src = {
 	},
 };
 
+#ifdef CONFIG_MMC_SD_ECO_MODE_CUST_SH
+static struct clk_freq_tbl ftbl_sdcc2_apps_clk_src[] = {
+	F(    144000,         cxo_clk_src,   16,    3,    25),
+	F(    400000,         cxo_clk_src,   12,    1,     4),
+	F(  20000000, gpll0_out_main,   15,    1,     2),
+	F(  25000000, gpll0_out_main,   12,    1,     2),
+	F(  48000000, gpll0_out_main,    1,    2,    25), /* this is setting for 48Mhz */
+	F(  50000000, gpll0_out_main,   12,    0,     0),
+	F( 100000000, gpll0_out_main,    6,    0,     0),
+	F( 200000000, gpll0_out_main,    3,    0,     0),
+	F_END
+};
+#else /* CONFIG_MMC_SD_ECO_MODE_CUST_SH */
 static struct clk_freq_tbl ftbl_sdcc2_apps_clk_src[] = {
 	F(    144000,         cxo_clk_src,   16,    3,    25),
 	F(    400000,         cxo_clk_src,   12,    1,     4),
@@ -1419,6 +1459,7 @@ static struct clk_freq_tbl ftbl_sdcc2_apps_clk_src[] = {
 	F( 200000000, gpll0_out_main,    3,    0,     0),
 	F_END
 };
+#endif /* CONFIG_MMC_SD_ECO_MODE_CUST_SH */
 
 static struct rcg_clk sdcc2_apps_clk_src = {
 	.cmd_rcgr_reg = GCC_SDCC2_APPS_CMD_RCGR,
@@ -2766,6 +2807,7 @@ static struct gate_clk gcc_usb3_phy_pipe_clk = {
 
 static struct branch_clk gcc_usb20_master_clk = {
 	.cbcr_reg = GCC_USB20_MASTER_CBCR,
+	.bcr_reg = GCC_USB_20_BCR,
 	.has_sibling = 0,
 	.base = &virt_base,
 	.c = {

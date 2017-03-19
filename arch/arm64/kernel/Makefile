@@ -7,6 +7,8 @@ AFLAGS_head.o		:= -DTEXT_OFFSET=$(TEXT_OFFSET)
 CFLAGS_efi-stub.o 	:= -DTEXT_OFFSET=$(TEXT_OFFSET)
 CFLAGS_armv8_deprecated.o := -I$(src)
 
+KASAN_SANITIZE_efi-stub.o	:= n
+
 CFLAGS_REMOVE_ftrace.o = -pg
 CFLAGS_REMOVE_insn.o = -pg
 CFLAGS_REMOVE_return_address.o = -pg
@@ -36,8 +38,10 @@ arm64-obj-$(CONFIG_KGDB)		+= kgdb.o
 arm64-obj-$(CONFIG_EFI)			+= efi.o efi-stub.o efi-entry.o
 arm64-obj-$(CONFIG_PCI)			+= pci.o
 arm64-obj-$(CONFIG_ARMV8_DEPRECATED)	+= armv8_deprecated.o
-arm64-obj-$(CONFIG_MSM_APP_API)		+= app_api.o
-arm64-obj-$(CONFIG_MSM_APP_SETTINGS)	+= app_setting.o
+ifeq ($(CONFIG_SHSYS_CUST),y)
+    arm64-obj-$(CONFIG_MSM_APP_API)			+= app_api.o
+    arm64-obj-$(CONFIG_MSM_APP_SETTINGS)	+= app_setting.o
+endif
 
 obj-y					+= $(arm64-obj-y) vdso/
 obj-m					+= $(arm64-obj-m)

@@ -489,7 +489,12 @@ static void init_ecryption_parameters(bool *hw_crypt, bool *cipher_supported,
 			 * we should apply external algorythm
 			 * assume that is_hw_crypt() cbck is supplied
 			 */
+#ifndef CONFIG_SHSYS_CUST
 			*hw_crypt = get_events()->is_hw_crypt_cb();
+#else	// not CONFIG_SHSYS_CUST
+			if (get_events()->is_hw_crypt_cb)
+				*hw_crypt = get_events()->is_hw_crypt_cb();
+#endif	// not CONFIG_SHSYS_CUST
 		}
 	}
 }

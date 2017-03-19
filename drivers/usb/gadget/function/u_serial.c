@@ -447,7 +447,9 @@ __acquires(&port->port_lock)
 		 */
 		if (!port->port_usb) {
 			do_tty_wake = false;
+#ifndef CONFIG_USB_ANDROID_SH_CUST
 			gs_free_req(in, req);
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 			break;
 		}
 		if (status) {
@@ -504,7 +506,11 @@ __acquires(&port->port_lock)
 
 		req = list_entry(pool->next, struct usb_request, list);
 		list_del(&req->list);
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+		req->length = min((u16)out->maxpacket, (u16)RX_BUF_SIZE);
+#else /* CONFIG_USB_ANDROID_SH_CUST */
 		req->length = RX_BUF_SIZE;
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 
 		/* drop lock while we call out; the controller driver
 		 * may need to call us back (e.g. for disconnect)
@@ -655,6 +661,7 @@ static void gs_rx_push(struct work_struct *w)
 		gs_start_rx(port);
 
 	spin_unlock_irq(&port->port_lock);
+	mdelay(5);
 }
 
 static void gs_read_complete(struct usb_ep *ep, struct usb_request *req)
@@ -827,7 +834,12 @@ static int gs_open(struct tty_struct *tty, struct file *file)
 
 			/* already open?  Great. */
 			if (port->port.count) {
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+				/* already opened ... must return EBUSY after unlock */
+				status = -ENOTSUPP;
+#else /* CONFIG_USB_ANDROID_SH_CUST */
 				status = 0;
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 				port->port.count++;
 
 			/* currently opening/closing? wait ... */
@@ -847,6 +859,10 @@ static int gs_open(struct tty_struct *tty, struct file *file)
 		default:
 			/* fully handled */
 			return status;
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+		case -ENOTSUPP:
+			return -EBUSY;
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 		case -EAGAIN:
 			/* must do the work */
 			break;
@@ -1537,6 +1553,10 @@ int gserial_connect(struct gserial *gser, u8 port_num)
 			gser->disconnect(gser);
 	}
 
+#ifdef CONFIG_USB_ANDROID_SH_CUST
+	if (port->port_usb)
+		status = gs_start_tx(port);
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
 	spin_unlock_irqrestore(&port->port_lock, flags);
 
 	return status;
@@ -1633,6 +1653,11 @@ static int userial_init(void)
 			B9600 | CS8 | CREAD | HUPCL | CLOCAL;
 	gs_tty_driver->init_termios.c_ispeed = 9600;
 	gs_tty_driver->init_termios.c_ospeed = 9600;
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	gs_tty_driver->init_termios.c_iflag = 0;
+	gs_tty_driver->init_termios.c_oflag = 0;
+	gs_tty_driver->init_termios.c_lflag = 0;
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 
 	tty_set_operations(gs_tty_driver, &gs_tty_ops);
 	for (i = 0; i < MAX_U_SERIAL_PORTS; i++)

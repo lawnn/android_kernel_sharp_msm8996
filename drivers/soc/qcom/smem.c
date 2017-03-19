@@ -1506,3 +1506,16 @@ int __init msm_smem_init(void)
 }
 
 arch_initcall(msm_smem_init);
+
+
+#ifdef CONFIG_SHLOG_SYSTEM
+void* shrlog_get_smem_pos(resource_size_t* pRetSize)
+{
+    if( smem_ram_base == NULL ){
+	if( pRetSize != NULL ) *pRetSize = 0;
+    }else{
+	*pRetSize = smem_ram_size;
+    }
+    return smem_ram_base;
+}
+#endif /* CONFIG_SHLOG_SYSTEM */

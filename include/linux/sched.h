@@ -1319,6 +1319,8 @@ struct task_struct {
 #ifdef CONFIG_SCHED_QHMP
 	u64 run_start;
 #endif
+	struct related_thread_group *grp;
+	struct list_head grp_list;
 #endif
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group *sched_task_group;
@@ -2198,6 +2200,8 @@ static inline void sched_set_cluster_dstate(const cpumask_t *cluster_cpus,
 
 extern int sched_set_wake_up_idle(struct task_struct *p, int wake_up_idle);
 extern u32 sched_get_wake_up_idle(struct task_struct *p);
+extern int sched_set_group_id(struct task_struct *p, unsigned int group_id);
+extern unsigned int sched_get_group_id(struct task_struct *p);
 
 #ifdef CONFIG_SCHED_HMP
 
@@ -2455,6 +2459,7 @@ extern void xtime_update(unsigned long ticks);
 
 extern int wake_up_state(struct task_struct *tsk, unsigned int state);
 extern int wake_up_process(struct task_struct *tsk);
+extern int wake_up_process_no_notif(struct task_struct *tsk);
 extern void wake_up_new_task(struct task_struct *tsk);
 #ifdef CONFIG_SMP
  extern void kick_process(struct task_struct *tsk);

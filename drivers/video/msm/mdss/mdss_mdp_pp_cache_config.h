@@ -40,9 +40,17 @@ int pp_igc_lut_cache_params(struct mdp_igc_lut_data *config,
 			    struct mdp_pp_cache_res *res_cache,
 			    u32 copy_from_kernel);
 
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+int pp_pgc_lut_cache_params(struct mdp_pgc_lut_data *config,
+			    struct mdss_pp_res_type *mdss_pp_res,
+			    int location, u32 copy_from_kernel);
+int mdss_mdp_specified_gc_lut_write(struct mdp_specified_gc_lut_data *config, struct mdss_pp_res_type *mdss_pp_res);
+extern int mdss_mdp_specified_gc_lut_read(struct mdp_specified_gc_lut_data *config, struct mdss_pp_res_type *mdss_pp_res);
+#else /* CONFIG_SHDISP */
 int pp_pgc_lut_cache_params(struct mdp_pgc_lut_data *config,
 			    struct mdss_pp_res_type *mdss_pp_res,
 			    int location);
+#endif /* CONFIG_SHDISP */
 
 int pp_copy_layer_igc_payload(struct mdp_overlay_pp_params *pp_info);
 int pp_copy_layer_hist_lut_payload(struct mdp_overlay_pp_params *pp_info);

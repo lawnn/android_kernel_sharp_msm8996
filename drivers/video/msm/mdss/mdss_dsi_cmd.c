@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -677,6 +677,7 @@ int mdss_dsi_long_read_resp(struct dsi_buf *rp)
 	return rp->len;
 }
 
+#ifndef CONFIG_SHDISP /* CUST_ID_00060 */
 static char set_tear_on[2] = {0x35, 0x00};
 static struct dsi_cmd_desc dsi_tear_on_cmd = {
 	{DTYPE_DCS_WRITE1, 1, 0, 0, 0, sizeof(set_tear_on)}, set_tear_on};
@@ -684,9 +685,11 @@ static struct dsi_cmd_desc dsi_tear_on_cmd = {
 static char set_tear_off[2] = {0x34, 0x00};
 static struct dsi_cmd_desc dsi_tear_off_cmd = {
 	{DTYPE_DCS_WRITE, 1, 0, 0, 0, sizeof(set_tear_off)}, set_tear_off};
+#endif /* CONFIG_SHDISP */
 
 void mdss_dsi_set_tear_on(struct mdss_dsi_ctrl_pdata *ctrl)
 {
+#ifndef CONFIG_SHDISP /* CUST_ID_00060 */
 	struct dcs_cmd_req cmdreq;
 	struct mdss_panel_info *pinfo;
 
@@ -701,10 +704,12 @@ void mdss_dsi_set_tear_on(struct mdss_dsi_ctrl_pdata *ctrl)
 	cmdreq.cb = NULL;
 
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
+#endif /* CONFIG_SHDISP */
 }
 
 void mdss_dsi_set_tear_off(struct mdss_dsi_ctrl_pdata *ctrl)
 {
+#ifndef CONFIG_SHDISP /* CUST_ID_00060 */
 	struct dcs_cmd_req cmdreq;
 	struct mdss_panel_info *pinfo;
 
@@ -719,12 +724,14 @@ void mdss_dsi_set_tear_off(struct mdss_dsi_ctrl_pdata *ctrl)
 	cmdreq.cb = NULL;
 
 	mdss_dsi_cmdlist_put(ctrl, &cmdreq);
+#endif /* CONFIG_SHDISP */
 }
 
 /*
  * mdss_dsi_cmd_get: ctrl->cmd_mutex acquired by caller
  */
-struct dcs_cmd_req *mdss_dsi_cmdlist_get(struct mdss_dsi_ctrl_pdata *ctrl)
+struct dcs_cmd_req *mdss_dsi_cmdlist_get(struct mdss_dsi_ctrl_pdata *ctrl,
+				int from_mdp)
 {
 	struct dcs_cmd_list *clist;
 	struct dcs_cmd_req *req = NULL;
@@ -733,6 +740,12 @@ struct dcs_cmd_req *mdss_dsi_cmdlist_get(struct mdss_dsi_ctrl_pdata *ctrl)
 	clist = &ctrl->cmdlist;
 	if (clist->get != clist->put) {
 		req = &clist->list[clist->get];
+		/*dont let commit thread steal ESD thread's
+		command*/
+		if (from_mdp && (req->flags & CMD_REQ_COMMIT)) {
+			mutex_unlock(&ctrl->cmdlist_mutex);
+			return NULL;
+		}
 		clist->get++;
 		clist->get %= CMD_REQ_MAX;
 		clist->tot--;

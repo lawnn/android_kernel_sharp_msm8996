@@ -750,6 +750,10 @@ struct Scsi_Host {
 	 * Needed just in case we have virtual hosts.
 	 */
 	struct device *dma_dev;
+#ifdef CONFIG_USB_STORAGE_SH_CUST_DETECT
+	/* connected by usb */
+	unsigned int  by_usb;
+#endif /* CONFIG_USB_STORAGE_SH_CUST_DETECT */
 
 	/*
 	 * We should ensure that this is aligned, both for better performance

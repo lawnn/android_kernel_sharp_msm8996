@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -579,7 +579,8 @@ static int32_t msm_cci_data_queue(struct cci_device *cci_dev,
 	}
 
 	if ((!cmd_size) || (cmd_size > CCI_I2C_MAX_WRITE)) {
-		pr_err("%s:%d Failed line\n", __func__, __LINE__);
+		pr_err("%s:%d failed: invalid cmd_size %d\n",
+			__func__, __LINE__, cmd_size);
 		return -EINVAL;
 	}
 
@@ -587,11 +588,13 @@ static int32_t msm_cci_data_queue(struct cci_device *cci_dev,
 		i2c_msg->addr_type, i2c_msg->data_type, cmd_size);
 
 	if (i2c_msg->addr_type >= MSM_CAMERA_I2C_ADDR_TYPE_MAX) {
-		pr_err("%s failed line %d\n", __func__, __LINE__);
+		pr_err("%s:%d failed: invalid addr_type 0x%X\n",
+			__func__, __LINE__, i2c_msg->addr_type);
 		return -EINVAL;
 	}
 	if (i2c_msg->data_type >= MSM_CAMERA_I2C_DATA_TYPE_MAX) {
-		pr_err("%s failed line %d\n", __func__, __LINE__);
+		pr_err("%s:%d failed: invalid data_type 0x%X\n",
+			__func__, __LINE__, i2c_msg->data_type);
 		return -EINVAL;
 	}
 	reg_offset = master * 0x200 + queue * 0x100;
@@ -1259,7 +1262,8 @@ static int32_t msm_cci_init(struct v4l2_subdev *sd,
 		return rc;
 	}
 
-	rc = cam_config_ahb_clk(CAM_AHB_CLIENT_CCI, CAMERA_AHB_SVS_VOTE);
+	rc = cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CCI,
+			CAM_AHB_SVS_VOTE);
 	if (rc < 0) {
 		pr_err("%s: failed to vote for AHB\n", __func__);
 		return rc;
@@ -1419,8 +1423,8 @@ clk_enable_failed:
 		cci_dev->cci_gpio_tbl_size, 0);
 request_gpio_failed:
 	cci_dev->ref_count--;
-	if (cam_config_ahb_clk(CAM_AHB_CLIENT_CCI,
-		CAMERA_AHB_SUSPEND_VOTE) < 0)
+	if (cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CCI,
+		CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote for AHB\n", __func__);
 	return rc;
 }
@@ -1477,8 +1481,8 @@ static int32_t msm_cci_release(struct v4l2_subdev *sd)
 	cci_dev->cci_clk_src = 0;
 
 ahb_vote_suspend:
-	if (cam_config_ahb_clk(CAM_AHB_CLIENT_CCI,
-		CAMERA_AHB_SUSPEND_VOTE) < 0)
+	if (cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CCI,
+		CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote for AHB\n", __func__);
 	return rc;
 }
@@ -1583,7 +1587,6 @@ static irqreturn_t msm_cci_irq(int irq_num, void *data)
 	irq = msm_camera_io_r_mb(cci_dev->base + CCI_IRQ_STATUS_0_ADDR);
 	msm_camera_io_w_mb(irq, cci_dev->base + CCI_IRQ_CLEAR_0_ADDR);
 	msm_camera_io_w_mb(0x1, cci_dev->base + CCI_IRQ_GLOBAL_CLEAR_CMD_ADDR);
-	msm_camera_io_w_mb(0x0, cci_dev->base + CCI_IRQ_GLOBAL_CLEAR_CMD_ADDR);
 	CDBG("%s CCI_I2C_M0_STATUS_ADDR = 0x%x\n", __func__, irq);
 	if (irq & CCI_IRQ_STATUS_0_RST_DONE_ACK_BMSK) {
 		if (cci_dev->cci_master_info[MASTER_0].reset_pending == TRUE) {

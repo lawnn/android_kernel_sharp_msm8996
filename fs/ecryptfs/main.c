@@ -37,6 +37,9 @@
 #include <linux/fs_stack.h>
 #include <linux/slab.h>
 #include <linux/magic.h>
+#ifdef CONFIG_SHSYS_CUST
+#include <linux/mm.h>
+#endif	//CONFIG_SHSYS_CUST
 #include "ecryptfs_kernel.h"
 
 /**
@@ -156,15 +159,42 @@ int ecryptfs_get_lower_file(struct dentry *dentry, struct inode *inode)
 
 void ecryptfs_put_lower_file(struct inode *inode)
 {
+#ifdef CONFIG_SHSYS_CUST
+	int ret = 0;
+#endif	//CONFIG_SHSYS_CUST
 	struct ecryptfs_inode_info *inode_info;
+#ifdef CONFIG_SHSYS_CUST
+	bool clear_cache_needed = false;
+#endif	//CONFIG_SHSYS_CUST
 
 	inode_info = ecryptfs_inode_to_private(inode);
 	if (atomic_dec_and_mutex_lock(&inode_info->lower_file_count,
 				      &inode_info->lower_file_mutex)) {
+#ifdef CONFIG_SHSYS_CUST
+		if (get_events() && get_events()->is_hw_crypt_cb &&
+				get_events()->is_hw_crypt_cb())
+			clear_cache_needed = true;
+
+		if (clear_cache_needed) {
+			ret = vfs_fsync(inode_info->lower_file, false);
+
+			if (ret)
+				pr_err("failed to sync file ret = %d.\n", ret);
+		}
+#endif	//CONFIG_SHSYS_CUST
+
 		filemap_write_and_wait(inode->i_mapping);
 		fput(inode_info->lower_file);
 		inode_info->lower_file = NULL;
 		mutex_unlock(&inode_info->lower_file_mutex);
+
+#ifdef CONFIG_SHSYS_CUST
+		if (clear_cache_needed) {
+			truncate_inode_pages_fill_zero(inode->i_mapping, 0);
+			truncate_inode_pages_fill_zero(
+				ecryptfs_inode_to_lower(inode)->i_mapping, 0);
+		}
+#endif	//CONFIG_SHSYS_CUST
 
 		if (get_events() && get_events()->release_cb)
 			get_events()->release_cb(
@@ -594,7 +624,13 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 
 	ecryptfs_set_superblock_lower(s, path.dentry->d_sb);
 
+#ifndef CONFIG_SHSYS_CUST
 	ecryptfs_drop_pagecache_sb(ecryptfs_superblock_to_lower(s), 0);
+#else	// not CONFIG_SHSYS_CUST
+	if (get_events() && get_events()->is_hw_crypt_cb &&
+			get_events()->is_hw_crypt_cb())
+		drop_pagecache_sb(ecryptfs_superblock_to_lower(s), 0);
+#endif	// not CONFIG_SHSYS_CUST
 
 	/**
 	 * Set the POSIX ACL flag based on whether they're enabled in the lower

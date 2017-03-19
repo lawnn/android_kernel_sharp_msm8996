@@ -3,7 +3,7 @@
  *
  * This code is based on drivers/scsi/ufs/ufshcd.c
  * Copyright (C) 2011-2013 Samsung India Software Operations
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  *
  * Authors:
  *	Santosh Yaraganavi <santosh.sy@samsung.com>
@@ -183,9 +183,15 @@ void ufshcd_update_query_stats(struct ufs_hba *hba,
 #define NOP_OUT_TIMEOUT    30 /* msecs */
 
 /* Query request retries */
-#define QUERY_REQ_RETRIES 3
+#define QUERY_REQ_RETRIES 10
 /* Query request timeout */
-#define QUERY_REQ_TIMEOUT 1500 /* 1.5 seconds */
+#define QUERY_REQ_TIMEOUT 100 /* msec */
+/*
+ * Query request timeout for fDeviceInit flag
+ * fDeviceInit query response time for some devices is too large that default
+ * QUERY_REQ_TIMEOUT may not be enough for such devices.
+ */
+#define QUERY_FDEVICEINIT_REQ_TIMEOUT 600 /* msec */
 
 /* Task management command timeout */
 #define TM_CMD_TIMEOUT	100 /* msecs */
@@ -623,8 +629,8 @@ static void ufshcd_print_host_state(struct ufs_hba *hba)
 	dev_err(hba->dev, "UFS Host state=%d\n", hba->ufshcd_state);
 	dev_err(hba->dev, "lrb in use=0x%lx, outstanding reqs=0x%lx tasks=0x%lx\n",
 		hba->lrb_in_use, hba->outstanding_tasks, hba->outstanding_reqs);
-	dev_err(hba->dev, "saved_err=0x%x, saved_uic_err=0x%x\n",
-		hba->saved_err, hba->saved_uic_err);
+	dev_err(hba->dev, "saved_err=0x%x, saved_uic_err=0x%x, saved_ce_err=0x%x\n",
+		hba->saved_err, hba->saved_uic_err, hba->saved_ce_err);
 	dev_err(hba->dev, "Device power mode=%d, UIC link state=%d\n",
 		hba->curr_dev_pwr_mode, hba->uic_link_state);
 	dev_err(hba->dev, "PM in progress=%d, sys. suspended=%d\n",
@@ -730,6 +736,9 @@ static inline u32 ufshcd_get_intr_mask(struct ufs_hba *hba)
 	default:
 		intr_mask = INTERRUPT_MASK_ALL_VER_21;
 	}
+
+	if (!ufshcd_is_crypto_supported(hba))
+		intr_mask &= ~CRYPTO_ENGINE_FATAL_ERROR;
 
 	return intr_mask;
 }
@@ -994,7 +1003,11 @@ static void ufshcd_enable_run_stop_reg(struct ufs_hba *hba)
  */
 static inline void ufshcd_hba_start(struct ufs_hba *hba)
 {
-	ufshcd_writel(hba, CONTROLLER_ENABLE, REG_CONTROLLER_ENABLE);
+	u32 val = CONTROLLER_ENABLE;
+
+	if (ufshcd_is_crypto_supported(hba))
+		val |= CRYPTO_GENERAL_ENABLE;
+	ufshcd_writel(hba, val, REG_CONTROLLER_ENABLE);
 }
 
 /**
@@ -1477,6 +1490,8 @@ out:
 static void ufshcd_init_clk_gating(struct ufs_hba *hba)
 {
 	struct ufs_clk_gating *gating = &hba->clk_gating;
+
+	hba->clk_gating.state = CLKS_ON;
 
 	if (!ufshcd_is_clkgating_allowed(hba))
 		return;
@@ -2259,15 +2274,52 @@ static void ufshcd_disable_intr(struct ufs_hba *hba, u32 intrs)
 	ufshcd_writel(hba, set, REG_INTERRUPT_ENABLE);
 }
 
+static int ufshcd_prepare_crypto_utrd(struct ufs_hba *hba,
+		struct ufshcd_lrb *lrbp)
+{
+	struct utp_transfer_req_desc *req_desc = lrbp->utr_descriptor_ptr;
+	u8 cc_index = 0;
+	bool enable = false;
+	u64 dun = 0;
+	int ret;
+
+	/*
+	 * Call vendor specific code to get crypto info for this request:
+	 * enable, crypto config. index, DUN.
+	 * If bypass is set, don't bother setting the other fields.
+	 */
+	ret = ufshcd_vops_crypto_req_setup(hba, lrbp, &cc_index, &enable, &dun);
+	if (ret) {
+		dev_err(hba->dev,
+			"%s: failed to setup crypto request (%d)\n",
+			__func__, ret);
+		return ret;
+	}
+
+	if (!enable)
+		goto out;
+
+	req_desc->header.dword_0 |= cc_index | UTRD_CRYPTO_ENABLE;
+	if (lrbp->cmd->request && lrbp->cmd->request->bio)
+		dun = lrbp->cmd->request->bio->bi_iter.bi_sector;
+
+	req_desc->header.dword_1 = (u32)(dun & 0xFFFFFFFF);
+	req_desc->header.dword_3 = (u32)((dun >> 32) & 0xFFFFFFFF);
+out:
+	return 0;
+}
+
 /**
  * ufshcd_prepare_req_desc_hdr() - Fills the requests header
  * descriptor according to request
+ * @hba: per adapter instance
  * @lrbp: pointer to local reference block
  * @upiu_flags: flags required in the header
  * @cmd_dir: requests data direction
  */
-static void ufshcd_prepare_req_desc_hdr(struct ufshcd_lrb *lrbp,
-		u32 *upiu_flags, enum dma_data_direction cmd_dir)
+static void ufshcd_prepare_req_desc_hdr(struct ufs_hba *hba,
+	struct ufshcd_lrb *lrbp, u32 *upiu_flags,
+	enum dma_data_direction cmd_dir)
 {
 	struct utp_transfer_req_desc *req_desc = lrbp->utr_descriptor_ptr;
 	u32 data_direction;
@@ -2304,6 +2356,9 @@ static void ufshcd_prepare_req_desc_hdr(struct ufshcd_lrb *lrbp,
 	req_desc->header.dword_3 = 0;
 
 	req_desc->prd_table_length = 0;
+
+	if (ufshcd_is_crypto_supported(hba))
+		ufshcd_prepare_crypto_utrd(hba, lrbp);
 }
 
 /**
@@ -2406,7 +2461,7 @@ static int ufshcd_compose_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	switch (lrbp->command_type) {
 	case UTP_CMD_TYPE_SCSI:
 		if (likely(lrbp->cmd)) {
-			ufshcd_prepare_req_desc_hdr(lrbp, &upiu_flags,
+			ufshcd_prepare_req_desc_hdr(hba, lrbp, &upiu_flags,
 					lrbp->cmd->sc_data_direction);
 			ufshcd_prepare_utp_scsi_cmd_upiu(lrbp, upiu_flags);
 		} else {
@@ -2414,7 +2469,7 @@ static int ufshcd_compose_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 		}
 		break;
 	case UTP_CMD_TYPE_DEV_MANAGE:
-		ufshcd_prepare_req_desc_hdr(lrbp, &upiu_flags, DMA_NONE);
+		ufshcd_prepare_req_desc_hdr(hba, lrbp, &upiu_flags, DMA_NONE);
 		if (hba->dev_cmd.type == DEV_CMD_TYPE_QUERY)
 			ufshcd_prepare_utp_query_req_upiu(
 					hba, lrbp, upiu_flags);
@@ -2540,7 +2595,8 @@ static int ufshcd_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 		clear_bit_unlock(tag, &hba->lrb_in_use);
 		goto out;
 	}
-	WARN_ON(hba->clk_gating.state != CLKS_ON);
+	if (ufshcd_is_clkgating_allowed(hba))
+		WARN_ON(hba->clk_gating.state != CLKS_ON);
 
 	err = ufshcd_hibern8_hold(hba, true);
 	if (err) {
@@ -2549,7 +2605,8 @@ static int ufshcd_queuecommand(struct Scsi_Host *host, struct scsi_cmnd *cmd)
 		ufshcd_release(hba, true);
 		goto out;
 	}
-	WARN_ON(hba->hibern8_on_idle.state != HIBERN8_EXITED);
+	if (ufshcd_is_hibern8_on_idle_allowed(hba))
+		WARN_ON(hba->hibern8_on_idle.state != HIBERN8_EXITED);
 
 	/* Vote PM QoS for the request */
 	ufshcd_vops_pm_qos_req_start(hba, cmd->request);
@@ -2927,6 +2984,9 @@ int ufshcd_query_flag(struct ufs_hba *hba, enum query_opcode opcode,
 		err = -EINVAL;
 		goto out_unlock;
 	}
+
+	if (idn == QUERY_FLAG_IDN_FDEVICEINIT)
+		timeout = QUERY_FDEVICEINIT_REQ_TIMEOUT;
 
 	err = ufshcd_exec_dev_cmd(hba, DEV_CMD_TYPE_QUERY, timeout);
 
@@ -4381,16 +4441,7 @@ static int ufshcd_link_startup(struct ufs_hba *hba)
 {
 	int ret;
 	int retries = DME_LINKSTARTUP_RETRIES;
-	bool link_startup_again = false;
 
-	/*
-	 * If UFS device isn't active then we will have to issue link startup
-	 * 2 times to make sure the device state move to active.
-	 */
-	if (!ufshcd_is_ufs_dev_active(hba))
-		link_startup_again = true;
-
-link_startup:
 	do {
 		ufshcd_vops_link_startup_notify(hba, PRE_CHANGE);
 
@@ -4418,12 +4469,6 @@ link_startup:
 	if (ret)
 		/* failed to get the link up... retire */
 		goto out;
-
-	if (link_startup_again) {
-		link_startup_again = false;
-		retries = DME_LINKSTARTUP_RETRIES;
-		goto link_startup;
-	}
 
 	/* Mark that link is up in PWM-G1, 1-lane, SLOW-AUTO mode */
 	ufshcd_init_pwr_info(hba);
@@ -4838,6 +4883,9 @@ ufshcd_transfer_rsp_status(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	case OCS_MISMATCH_RESP_UPIU_SIZE:
 	case OCS_PEER_COMM_FAILURE:
 	case OCS_FATAL_ERROR:
+	case OCS_DEVICE_FATAL_ERROR:
+	case OCS_INVALID_CRYPTO_CONFIG:
+	case OCS_GENERAL_CRYPTO_ERROR:
 	default:
 		result |= DID_ERROR << 16;
 		dev_err(hba->dev,
@@ -5427,7 +5475,6 @@ static void ufshcd_err_handler(struct work_struct *work)
 	bool err_xfer = false, err_tm = false;
 	int err = 0;
 	int tag;
-	int crypto_engine_err = 0;
 	bool needs_reset = false;
 
 	hba = container_of(work, struct ufs_hba, eh_work);
@@ -5471,9 +5518,7 @@ static void ufshcd_err_handler(struct work_struct *work)
 		}
 	}
 
-	crypto_engine_err = ufshcd_vops_crypto_engine_get_err(hba);
-
-	if ((hba->saved_err & INT_FATAL_ERRORS) || crypto_engine_err ||
+	if ((hba->saved_err & INT_FATAL_ERRORS) || hba->saved_ce_err ||
 	    ((hba->saved_err & UIC_ERROR) &&
 	    (hba->saved_uic_err & (UFSHCD_UIC_DL_PA_INIT_ERROR |
 				   UFSHCD_UIC_DL_NAC_RECEIVED_ERROR |
@@ -5520,9 +5565,11 @@ skip_pending_xfer_clear:
 	if (needs_reset) {
 		unsigned long max_doorbells = (1UL << hba->nutrs) - 1;
 
-		if (hba->saved_err & INT_FATAL_ERRORS || crypto_engine_err)
+		if (hba->saved_err & INT_FATAL_ERRORS)
 			ufshcd_update_error_stats(hba,
 						  UFS_ERR_INT_FATAL_ERRORS);
+		if (hba->saved_ce_err)
+			ufshcd_update_error_stats(hba, UFS_ERR_CRYPTO_ENGINE);
 
 		if (hba->saved_err & UIC_ERROR)
 			ufshcd_update_error_stats(hba,
@@ -5558,7 +5605,7 @@ skip_pending_xfer_clear:
 		scsi_report_bus_reset(hba->host, 0);
 		hba->saved_err = 0;
 		hba->saved_uic_err = 0;
-		ufshcd_vops_crypto_engine_reset_err(hba);
+		hba->saved_ce_err = 0;
 	}
 
 skip_err_handling:
@@ -5654,11 +5701,8 @@ static void ufshcd_update_uic_error(struct ufs_hba *hba)
 static void ufshcd_check_errors(struct ufs_hba *hba)
 {
 	bool queue_eh_work = false;
-	int crypto_engine_err = 0;
 
-	crypto_engine_err = ufshcd_vops_crypto_engine_get_err(hba);
-
-	if (hba->errors & INT_FATAL_ERRORS || crypto_engine_err)
+	if (hba->errors & INT_FATAL_ERRORS || hba->ce_error)
 		queue_eh_work = true;
 
 	if (hba->errors & UIC_ERROR) {
@@ -5675,6 +5719,7 @@ static void ufshcd_check_errors(struct ufs_hba *hba)
 		 */
 		hba->saved_err |= hba->errors;
 		hba->saved_uic_err |= hba->uic_error;
+		hba->saved_ce_err |= hba->ce_error;
 
 		/* handle fatal errors only when link is functional */
 		if (hba->ufshcd_state == UFSHCD_STATE_OPERATIONAL) {
@@ -5713,15 +5758,13 @@ static void ufshcd_tmc_handler(struct ufs_hba *hba)
  */
 static void ufshcd_sl_intr(struct ufs_hba *hba, u32 intr_status)
 {
-	bool crypto_engine_err = false;
-
 	ufsdbg_error_inject_dispatcher(hba,
 		ERR_INJECT_INTR, intr_status, &intr_status);
 
-	ufshcd_vops_crypto_engine_eh(hba);
+	ufshcd_vops_crypto_engine_get_status(hba, &hba->ce_error);
 
 	hba->errors = UFSHCD_ERROR_MASK & intr_status;
-	if (hba->errors || crypto_engine_err)
+	if (hba->errors || hba->ce_error)
 		ufshcd_check_errors(hba);
 
 	if (intr_status & UFSHCD_UIC_MASK)
@@ -7015,13 +7058,10 @@ static int ufshcd_ioctl(struct scsi_device *dev, int cmd, void __user *buffer)
 				buffer);
 		pm_runtime_put_sync(hba->dev);
 		break;
-	case UFS_IOCTL_BLKROSET:
-		err = -ENOIOCTLCMD;
-		break;
 	default:
-		err = -EINVAL;
-		dev_err(hba->dev, "%s: Illegal ufs-IOCTL cmd %d\n", __func__,
-				cmd);
+		err = -ENOIOCTLCMD;
+		dev_dbg(hba->dev, "%s: Unsupported ioctl cmd %d\n", __func__,
+			cmd);
 		break;
 	}
 
@@ -7895,7 +7935,8 @@ static int ufshcd_suspend(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 	if (ret)
 		goto set_dev_active;
 
-	if (ufshcd_is_link_hibern8(hba))
+	if (ufshcd_is_link_hibern8(hba) &&
+	    ufshcd_is_hibern8_on_idle_allowed(hba))
 		hba->hibern8_on_idle.state = HIBERN8_ENTERED;
 
 	ufshcd_vreg_set_lpm(hba);
@@ -7918,8 +7959,11 @@ disable_clks:
 	if (ret)
 		goto set_link_active;
 
-	hba->clk_gating.state = CLKS_OFF;
-	trace_ufshcd_clk_gating(dev_name(hba->dev), hba->clk_gating.state);
+	if (ufshcd_is_clkgating_allowed(hba)) {
+		hba->clk_gating.state = CLKS_OFF;
+		trace_ufshcd_clk_gating(dev_name(hba->dev),
+					hba->clk_gating.state);
+	}
 	/*
 	 * Disable the host irq as host controller as there won't be any
 	 * host controller transaction expected till resume.
@@ -8001,7 +8045,8 @@ static int ufshcd_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 		ret = ufshcd_uic_hibern8_exit(hba);
 		if (!ret) {
 			ufshcd_set_link_active(hba);
-			hba->hibern8_on_idle.state = HIBERN8_EXITED;
+			if (ufshcd_is_hibern8_on_idle_allowed(hba))
+				hba->hibern8_on_idle.state = HIBERN8_EXITED;
 		} else {
 			goto vendor_suspend;
 		}
@@ -8014,7 +8059,8 @@ static int ufshcd_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 		if (ret || !ufshcd_is_link_active(hba))
 			goto vendor_suspend;
 		/* mark link state as hibern8 exited */
-		hba->hibern8_on_idle.state = HIBERN8_EXITED;
+		if (ufshcd_is_hibern8_on_idle_allowed(hba))
+			hba->hibern8_on_idle.state = HIBERN8_EXITED;
 	}
 
 	if (!ufshcd_is_ufs_dev_active(hba)) {
@@ -8044,7 +8090,8 @@ static int ufshcd_resume(struct ufs_hba *hba, enum ufs_pm_op pm_op)
 
 set_old_link_state:
 	ufshcd_link_state_transition(hba, old_link_state, 0);
-	if (ufshcd_is_link_hibern8(hba))
+	if (ufshcd_is_link_hibern8(hba) &&
+	    ufshcd_is_hibern8_on_idle_allowed(hba))
 		hba->hibern8_on_idle.state = HIBERN8_ENTERED;
 vendor_suspend:
 	ufshcd_vops_suspend(hba, pm_op);
@@ -8055,6 +8102,8 @@ disable_irq_and_vops_clks:
 	if (hba->clk_scaling.is_allowed)
 		ufshcd_suspend_clkscaling(hba);
 	ufshcd_disable_clocks(hba, false);
+	if (ufshcd_is_clkgating_allowed(hba))
+		hba->clk_gating.state = CLKS_OFF;
 out:
 	hba->pm_op_in_progress = 0;
 
@@ -9062,12 +9111,10 @@ int ufshcd_init(struct ufs_hba *hba, void __iomem *mmio_base, unsigned int irq)
 	pm_runtime_get_sync(dev);
 
 	/*
-	 * We are assuming that device wasn't put in sleep/power-down
-	 * state exclusively during the boot stage before kernel.
-	 * This assumption helps avoid doing link startup twice during
-	 * ufshcd_probe_hba().
+	 * The device-initialize-sequence hasn't been invoked yet.
+	 * Set the device to power-off state
 	 */
-	ufshcd_set_ufs_dev_active(hba);
+	ufshcd_set_ufs_dev_poweroff(hba);
 
 	async_schedule(ufshcd_async_scan, hba);
 

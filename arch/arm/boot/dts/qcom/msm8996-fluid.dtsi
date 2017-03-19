@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -12,8 +12,10 @@
 
 
 #include "msm8996-pinctrl.dtsi"
-#include "msm8996-camera-sensor-mtp.dtsi"
-#include "msm8996-wsa881x.dtsi"
+//#include "msm8996-camera-sensor-mtp.dtsi"
+/* SH_AUDIO_DRIVER -> */ /*21-002*/
+//#include "msm8996-wsa881x.dtsi"
+/* SH_AUDIO_DRIVER <- */ /*21-002*/
 
 / {
 	model = "Qualcomm Technologies, Inc. MSM 8996 FLUID";
@@ -257,6 +259,21 @@
 	};
 };
 
+&mdss_hdmi_tx {
+	pinctrl-names = "hdmi_hpd_active", "hdmi_ddc_active", "hdmi_cec_active",
+		"hdmi_active", "hdmi_sleep";
+	pinctrl-0 = <&mdss_hdmi_hpd_active &mdss_hdmi_ddc_suspend
+		&mdss_hdmi_cec_suspend>;
+	pinctrl-1 = <&mdss_hdmi_hpd_active &mdss_hdmi_ddc_active
+		&mdss_hdmi_cec_suspend>;
+	pinctrl-2 = <&mdss_hdmi_hpd_active &mdss_hdmi_cec_active
+		&mdss_hdmi_ddc_suspend>;
+	pinctrl-3 = <&mdss_hdmi_hpd_active &mdss_hdmi_ddc_active
+		&mdss_hdmi_cec_active>;
+	pinctrl-4 = <&mdss_hdmi_hpd_suspend &mdss_hdmi_ddc_suspend
+		&mdss_hdmi_cec_suspend>;
+};
+
 &pmi8994_charger {
 	qcom,dc-psy-type = "Wipower";
 	qcom,dcin-vadc = <&pmi8994_vadc>;
@@ -412,41 +429,50 @@
 		compatible = "gpio-keys";
 		input-name = "gpio-keys";
 
-		home {
-			label = "home";
-			gpios = <&pm8994_gpios 1 0x1>;
-			linux,input-type = <1>;
-			linux,code = <102>;
-			gpio-key,wakeup;
-			debounce-interval = <15>;
-		};
-
-		vol_up {
-			label = "volume_up";
-			gpios = <&pm8994_gpios 2 0x1>;
-			linux,input-type = <1>;
-			linux,code = <115>;
-			gpio-key,wakeup;
-			debounce-interval = <15>;
-		};
-
-		cam_snapshot {
-			label = "cam_snapshot";
+		vol_down {
+			label = "volume_down";
 			gpios = <&pm8994_gpios 4 0x1>;
 			linux,input-type = <1>;
-			linux,code = <766>;
+			linux,code = <114>;
 			gpio-key,wakeup;
 			debounce-interval = <15>;
 		};
 
-		cam_focus {
-			label = "cam_focus";
-			gpios = <&pm8994_gpios 5 0x1>;
-			linux,input-type = <1>;
-			linux,code = <528>;
-			gpio-key,wakeup;
-			debounce-interval = <15>;
-		};
+//		home {
+//			label = "home";
+//			gpios = <&pm8994_gpios 1 0x1>;
+//			linux,input-type = <1>;
+//			linux,code = <102>;
+//			gpio-key,wakeup;
+//			debounce-interval = <15>;
+//		};
+//
+//		vol_up {
+//			label = "volume_up";
+//			gpios = <&pm8994_gpios 2 0x1>;
+//			linux,input-type = <1>;
+//			linux,code = <115>;
+//			gpio-key,wakeup;
+//			debounce-interval = <15>;
+//		};
+//
+//		cam_snapshot {
+//			label = "cam_snapshot";
+//			gpios = <&pm8994_gpios 4 0x1>;
+//			linux,input-type = <1>;
+//			linux,code = <766>;
+//			gpio-key,wakeup;
+//			debounce-interval = <15>;
+//		};
+//
+//		cam_focus {
+//			label = "cam_focus";
+//			gpios = <&pm8994_gpios 5 0x1>;
+//			linux,input-type = <1>;
+//			linux,code = <528>;
+//			gpio-key,wakeup;
+//			debounce-interval = <15>;
+//		};
 	};
 
 	sound-9335 {
@@ -455,9 +481,11 @@
 		asoc-codec = <&stub_codec>, <&hdmi_audio>;
 		asoc-codec-names = "msm-stub-codec.1",
 				"msm-hdmi-audio-codec-rx";
-		qcom,wsa-max-devs = <1>;
-		qcom,wsa-devs = <&wsa881x_211>, <&wsa881x_213>;
-		qcom,wsa-aux-dev-prefix = "SpkrLeft", "SpkrLeft";
+/* SH_AUDIO_DRIVER -> */ /*21-002*/
+//		qcom,wsa-max-devs = <1>;
+//		qcom,wsa-devs = <&wsa881x_211>, <&wsa881x_213>;
+//		qcom,wsa-aux-dev-prefix = "SpkrLeft", "SpkrLeft";
+/* SH_AUDIO_DRIVER <- */ /*21-002*/
 	};
 
 };
@@ -602,6 +630,13 @@
 	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
 };
 
+&dsi_sharp_4k_dsc_video {
+	qcom,mdss-dsi-bl-pmic-control-type = "bl_ctrl_wled";
+	qcom,mdss-dsi-bl-min-level = <1>;
+	qcom,mdss-dsi-bl-max-level = <4095>;
+	qcom,panel-supply-entries = <&dsi_panel_pwr_supply>;
+};
+
 &labibb {
 	status = "ok";
 	qpnp,qpnp-labibb-mode = "lcd";
@@ -624,4 +659,8 @@
 		qcom,master-en = <1>;
 		status = "okay";
 	};
+};
+
+&wil6210 {
+	status = "ok";
 };

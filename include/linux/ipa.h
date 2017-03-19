@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1110,6 +1110,9 @@ struct ipa_mhi_connect_params {
 	u8 channel_id;
 };
 
+/* bit #40 in address should be asserted for MHI transfers over pcie */
+#define IPA_MHI_HOST_ADDR(addr) ((addr) | BIT_ULL(40))
+
 /**
  * struct ipa_gsi_ep_config - IPA GSI endpoint configurations
  *
@@ -1462,6 +1465,10 @@ int ipa_uc_wdi_get_dbpa(struct ipa_wdi_db_params *out);
  * if uC not ready only, register callback
  */
 int ipa_uc_reg_rdyCB(struct ipa_wdi_uc_ready_params *param);
+/*
+ * To de-register uC ready callback
+ */
+int ipa_uc_dereg_rdyCB(void);
 
 int ipa_create_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info);
 int ipa_release_wdi_mapping(u32 num_buffers, struct ipa_wdi_buffer_info *info);
@@ -1574,7 +1581,7 @@ int ipa_mhi_suspend(bool force);
 
 int ipa_mhi_resume(void);
 
-int ipa_mhi_destroy(void);
+void ipa_mhi_destroy(void);
 
 /*
  * IPA_USB
@@ -1582,7 +1589,7 @@ int ipa_mhi_destroy(void);
 
 /**
  * ipa_usb_init_teth_prot - Peripheral should call this function to initialize
- * RNDIS/ECM/teth_bridge, prior to calling ipa_usb_xdci_connect()
+ * RNDIS/ECM/teth_bridge/DPL, prior to calling ipa_usb_xdci_connect()
  *
  * @usb_teth_type: tethering protocol type
  * @teth_params:   pointer to tethering protocol parameters.
@@ -1602,7 +1609,7 @@ int ipa_usb_init_teth_prot(enum ipa_usb_teth_prot teth_prot,
 /**
  * ipa_usb_xdci_connect - Peripheral should call this function to start IN &
  * OUT xDCI channels, and connect RNDIS/ECM/MBIM/RMNET.
- * For DIAG, only starts IN channel.
+ * For DPL, only starts IN channel.
  *
  * @ul_chan_params: parameters for allocating UL xDCI channel. containing
  *              required info on event and transfer rings, and IPA EP
@@ -1630,7 +1637,7 @@ int ipa_usb_xdci_connect(struct ipa_usb_xdci_chan_params *ul_chan_params,
 /**
  * ipa_usb_xdci_disconnect - Peripheral should call this function to stop
  * IN & OUT xDCI channels
- * For DIAG, only stops IN channel.
+ * For DPL, only stops IN channel.
  *
  * @ul_clnt_hdl:    client handle received from ipa_usb_xdci_connect()
  *                  for OUT channel
@@ -1657,7 +1664,7 @@ int ipa_usb_deinit_teth_prot(enum ipa_usb_teth_prot teth_prot);
 
 /**
  * ipa_usb_xdci_suspend - Peripheral should call this function to suspend
- * IN & OUT xDCI channels
+ * IN & OUT or DPL xDCI channels
  *
  * @ul_clnt_hdl: client handle previously obtained from
  *               ipa_usb_xdci_connect() for OUT channel
@@ -1666,6 +1673,7 @@ int ipa_usb_deinit_teth_prot(enum ipa_usb_teth_prot teth_prot);
  * @teth_prot:   tethering protocol
  *
  * Note: Should not be called from atomic context
+ * Note: for DPL, the ul will be ignored as irrelevant
  *
  * @Return 0 on success, negative on failure
  */
@@ -1674,18 +1682,21 @@ int ipa_usb_xdci_suspend(u32 ul_clnt_hdl, u32 dl_clnt_hdl,
 
 /**
  * ipa_usb_xdci_resume - Peripheral should call this function to resume
- * IN & OUT xDCI channels
+ * IN & OUT or DPL xDCI channels
  *
  * @ul_clnt_hdl:   client handle received from ipa_usb_xdci_connect()
  *                 for OUT channel
  * @dl_clnt_hdl:   client handle received from ipa_usb_xdci_connect()
  *                 for IN channel
+ * @teth_prot:   tethering protocol
  *
  * Note: Should not be called from atomic context
+ * Note: for DPL, the ul will be ignored as irrelevant
  *
  * @Return 0 on success, negative on failure
  */
-int ipa_usb_xdci_resume(u32 ul_clnt_hdl, u32 dl_clnt_hdl);
+int ipa_usb_xdci_resume(u32 ul_clnt_hdl, u32 dl_clnt_hdl,
+			enum ipa_usb_teth_prot teth_prot);
 
 /*
  * mux id
@@ -1736,6 +1747,30 @@ int ipa_disable_apps_wan_cons_deaggr(uint32_t agg_size, uint32_t agg_count);
 struct ipa_gsi_ep_config *ipa_get_gsi_ep_info(int ipa_ep_idx);
 
 int ipa_stop_gsi_channel(u32 clnt_hdl);
+
+typedef void (*ipa_ready_cb)(void *user_data);
+
+/**
+* ipa_register_ipa_ready_cb() - register a callback to be invoked
+* when IPA core driver initialization is complete.
+*
+* @ipa_ready_cb:    CB to be triggered.
+* @user_data:       Data to be sent to the originator of the CB.
+*
+* Note: This function is expected to be utilized when ipa_is_ready
+* function returns false.
+* An IPA client may also use this function directly rather than
+* calling ipa_is_ready beforehand, as if this API returns -EEXIST,
+* this means IPA initialization is complete (and no callback will
+* be triggered).
+* When the callback is triggered, the client MUST perform his
+* operations in a different context.
+*
+* The function will return 0 on success, -ENOMEM on memory issues and
+* -EEXIST if IPA initialization is complete already.
+*/
+int ipa_register_ipa_ready_cb(void (*ipa_ready_cb)(void *user_data),
+			      void *user_data);
 
 #else /* (CONFIG_IPA || CONFIG_IPA3) */
 
@@ -2139,6 +2174,11 @@ static inline int ipa_uc_reg_rdyCB(
 	return -EPERM;
 }
 
+static inline int ipa_uc_dereg_rdyCB(void)
+{
+	return -EPERM;
+}
+
 
 /*
  * Resource manager
@@ -2381,9 +2421,9 @@ static inline int ipa_mhi_resume(void)
 	return -EPERM;
 }
 
-static inline int ipa_mhi_destroy(void)
+static inline void ipa_mhi_destroy(void)
 {
-	return -EPERM;
+	return;
 }
 
 /*
@@ -2399,7 +2439,8 @@ static inline int ipa_usb_init_teth_prot(enum ipa_usb_teth_prot teth_prot,
 	return -EPERM;
 }
 
-static int ipa_usb_xdci_connect(struct ipa_usb_xdci_chan_params *ul_chan_params,
+static inline int ipa_usb_xdci_connect(
+			 struct ipa_usb_xdci_chan_params *ul_chan_params,
 			 struct ipa_usb_xdci_chan_params *dl_chan_params,
 			 struct ipa_req_chan_out_params *ul_out_params,
 			 struct ipa_req_chan_out_params *dl_out_params,
@@ -2425,7 +2466,8 @@ static inline int ipa_usb_xdci_suspend(u32 ul_clnt_hdl, u32 dl_clnt_hdl,
 	return -EPERM;
 }
 
-static inline int ipa_usb_xdci_resume(u32 ul_clnt_hdl, u32 dl_clnt_hdl)
+static inline int ipa_usb_xdci_resume(u32 ul_clnt_hdl, u32 dl_clnt_hdl,
+			enum ipa_usb_teth_prot teth_prot)
 {
 	return -EPERM;
 }
@@ -2554,6 +2596,13 @@ static inline struct ipa_gsi_ep_config *ipa_get_gsi_ep_info(int ipa_ep_idx)
 }
 
 static inline int ipa_stop_gsi_channel(u32 clnt_hdl)
+{
+	return -EPERM;
+}
+
+static inline int ipa_register_ipa_ready_cb(
+	void (*ipa_ready_cb)(void *user_data),
+	void *user_data)
 {
 	return -EPERM;
 }

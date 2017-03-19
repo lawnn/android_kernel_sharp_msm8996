@@ -126,4 +126,20 @@ config DWC3_HOST_USB3_LPM_ENABLE
 	help
 	  Select this when you want to enable USB3 LPM with dwc3 xhci host.
 
+# 20141119 USB SHARP CUSTOMIZE ADD START
+config USB_DWC3_SH_CUST
+	boolean "Sharp Custamize for DWC3 Driver"
+	depends on USB_DWC3 && USB_ANDROID_SH_CUST
+	help
+		Add sharp custamize for DWC3 Driver.
+# 20141119 USB SHARP CUSTOMIZE ADD END
+
+# 20141224 USB SHARP CUSTOMIZE ADD START
+config USB_DWC3_LIMIT_LOCK
+	bool "Support for limitlock"
+	depends on USB_DWC3_SH_CUST
+	default n
+	help
+		Enable this to support the limit lock.
+# 20141224 USB SHARP CUSTOMIZE ADD END
 endif

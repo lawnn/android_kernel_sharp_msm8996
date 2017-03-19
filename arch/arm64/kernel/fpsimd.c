@@ -28,7 +28,9 @@
 
 #include <asm/fpsimd.h>
 #include <asm/cputype.h>
+#ifdef CONFIG_SHSYS_CUST
 #include <asm/app_api.h>
+#endif	//CONFIG_SHSYS_CUST
 
 #define FPEXC_IOF	(1 << 0)
 #define FPEXC_DZF	(1 << 1)
@@ -37,7 +39,9 @@
 #define FPEXC_IXF	(1 << 4)
 #define FPEXC_IDF	(1 << 7)
 
+#ifdef CONFIG_SHSYS_CUST
 #define FP_SIMD_BIT	31
+#endif	//CONFIG_SHSYS_CUST
 
 /*
  * In order to reduce the number of times the FPSIMD state is needlessly saved
@@ -97,6 +101,7 @@ static DEFINE_PER_CPU(int, fpsimd_stg_enable);
 static int fpsimd_settings = 0x1; /* default = 0x1 */
 module_param(fpsimd_settings, int, 0644);
 
+#ifdef CONFIG_SHSYS_CUST
 void fpsimd_settings_enable(void)
 {
 	set_app_setting_bit(FP_SIMD_BIT);
@@ -106,6 +111,7 @@ void fpsimd_settings_disable(void)
 {
 	clear_app_setting_bit(FP_SIMD_BIT);
 }
+#endif	//CONFIG_SHSYS_CUST
 
 /*
  * Trapped FP/ASIMD access.

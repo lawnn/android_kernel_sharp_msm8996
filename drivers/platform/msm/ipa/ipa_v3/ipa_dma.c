@@ -105,6 +105,7 @@ static struct ipa3_dma_ctx *ipa3_dma_ctx;
  *
  * Return codes: 0: success
  *		-EFAULT: IPADMA is already initialized
+ *		-EINVAL: IPA driver is not initialized
  *		-ENOMEM: allocating memory error
  *		-EPERM: pipe connection failed
  */
@@ -120,6 +121,12 @@ int ipa3_dma_init(void)
 		IPADMA_ERR("Already initialized.\n");
 		return -EFAULT;
 	}
+
+	if (!ipa3_is_ready()) {
+		IPADMA_ERR("IPA is not ready yet\n");
+		return -EINVAL;
+	}
+
 	ipa_dma_ctx_t = kzalloc(sizeof(*(ipa3_dma_ctx)), GFP_KERNEL);
 
 	if (!ipa_dma_ctx_t) {
@@ -252,7 +259,7 @@ int ipa3_dma_enable(void)
 		mutex_unlock(&ipa3_dma_ctx->enable_lock);
 		return -EPERM;
 	}
-	ipa3_inc_client_enable_clks();
+	IPA_ACTIVE_CLIENTS_INC_SPECIAL("DMA");
 	ipa3_dma_ctx->is_enabled = true;
 	mutex_unlock(&ipa3_dma_ctx->enable_lock);
 
@@ -315,7 +322,7 @@ int ipa3_dma_disable(void)
 	}
 	ipa3_dma_ctx->is_enabled = false;
 	spin_unlock_irqrestore(&ipa3_dma_ctx->pending_lock, flags);
-	ipa3_dec_client_disable_clks();
+	IPA_ACTIVE_CLIENTS_DEC_SPECIAL("DMA");
 	mutex_unlock(&ipa3_dma_ctx->enable_lock);
 	IPADMA_FUNC_EXIT();
 	return 0;
@@ -351,6 +358,8 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 	bool stop_polling = false;
 
 	IPADMA_FUNC_ENTRY();
+	IPADMA_DBG("input parameters: dest =  0x%llx, src = 0x%llx, len = %d\n",
+		dest, src, len);
 	if (ipa3_dma_ctx == NULL) {
 		IPADMA_ERR("IPADMA isn't initialized, can't memcpy\n");
 		return -EPERM;
@@ -497,6 +506,15 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 		i++;
 	} while (!stop_polling);
 
+	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
+		BUG_ON(len != gsi_notify.bytes_xfered);
+		BUG_ON(dest != ((struct ipa3_dma_xfer_wrapper *)
+				(gsi_notify.xfer_user_data))->phys_addr_dest);
+	} else {
+		BUG_ON(dest != iov.addr);
+		BUG_ON(len != iov.size);
+	}
+
 	mutex_lock(&ipa3_dma_ctx->sync_lock);
 	list_del(&head_descr->link);
 	cons_sys->len--;
@@ -508,14 +526,7 @@ int ipa3_dma_sync_memcpy(u64 dest, u64 src, int len)
 		complete(&head_descr->xfer_done);
 	}
 	mutex_unlock(&ipa3_dma_ctx->sync_lock);
-	if (ipa3_ctx->transport_prototype == IPA_TRANSPORT_TYPE_GSI) {
-		BUG_ON(len != gsi_notify.bytes_xfered);
-		BUG_ON(dest != ((struct ipa3_dma_xfer_wrapper *)
-				(gsi_notify.xfer_user_data))->phys_addr_dest);
-	} else {
-		BUG_ON(dest != iov.addr);
-		BUG_ON(len != iov.size);
-	}
+
 	atomic_inc(&ipa3_dma_ctx->total_sync_memcpy);
 	atomic_dec(&ipa3_dma_ctx->sync_memcpy_pending_cnt);
 	if (ipa3_dma_ctx->destroy_pending && !ipa3_dma_work_pending())
@@ -564,6 +575,8 @@ int ipa3_dma_async_memcpy(u64 dest, u64 src, int len,
 	unsigned long flags;
 
 	IPADMA_FUNC_ENTRY();
+	IPADMA_DBG("input parameters: dest =  0x%llx, src = 0x%llx, len = %d\n",
+		dest, src, len);
 	if (ipa3_dma_ctx == NULL) {
 		IPADMA_ERR("IPADMA isn't initialized, can't memcpy\n");
 		return -EPERM;
@@ -852,7 +865,6 @@ static ssize_t ipa3_dma_debugfs_read(struct file *file, char __user *ubuf,
 				 size_t count, loff_t *ppos)
 {
 	int nbytes = 0;
-
 	if (!ipa3_dma_ctx) {
 		nbytes += scnprintf(&dbg_buff[nbytes],
 			IPADMA_MAX_MSG_LEN - nbytes,

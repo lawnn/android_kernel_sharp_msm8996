@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -15,6 +15,9 @@
 
 #include <linux/switch.h>
 #include "mdss_hdmi_util.h"
+#include "mdss_cec_core.h"
+
+#define MAX_SWITCH_NAME_SIZE        5
 
 enum hdmi_tx_io_type {
 	HDMI_TX_CORE_IO,
@@ -41,6 +44,7 @@ struct hdmi_tx_platform_data {
 	struct reg_bus_client *reg_bus_clt[HDMI_TX_MAX_PM];
 	/* bitfield representing each module's pin state */
 	u64 pin_states;
+	bool pluggable;
 };
 
 struct hdmi_tx_pinctrl {
@@ -129,9 +133,7 @@ struct hdmi_tx_ctrl {
 	struct msm_hdmi_audio_setup_params audio_data;
 
 	struct mutex mutex;
-	struct mutex lut_lock;
-	struct mutex power_mutex;
-	struct mutex cable_notify_mutex;
+	struct mutex tx_lock;
 	struct list_head cable_notify_handlers;
 	struct kobject *kobj;
 	struct switch_dev sdev;
@@ -155,7 +157,6 @@ struct hdmi_tx_ctrl {
 
 	struct hdmi_util_ds_data ds_data;
 	struct completion hpd_int_done;
-	struct completion hpd_off_done;
 	struct work_struct hpd_int_work;
 	struct delayed_work hdcp_cb_work;
 
@@ -171,6 +172,8 @@ struct hdmi_tx_ctrl {
 	atomic_t audio_ack_pending;
 	bool hdcp14_sw_keys;
 	bool auth_state;
+	bool custom_edid;
+	bool sim_mode;
 	u32 enc_lvl;
 
 	u8 spd_vendor_name[9];
@@ -188,6 +191,12 @@ struct hdmi_tx_ctrl {
 
 	u8 *edid_buf;
 	u32 edid_buf_size;
+	u32 s3d_mode;
+
+	struct cec_ops hdmi_cec_ops;
+	struct cec_cbs hdmi_cec_cbs;
+
+	char disp_switch_name[MAX_SWITCH_NAME_SIZE];
 };
 
 #endif /* __MDSS_HDMI_TX_H__ */

@@ -71,6 +71,15 @@
 #define MSMFB_MDP_PP_GET_FEATURE_VERSION _IOWR(MSMFB_IOCTL_MAGIC, 171, \
 					      struct mdp_pp_feature_version)
 
+#define MSMFB_PANEL_STATE_CHG_WAIT _IOW(MSMFB_IOCTL_MAGIC, 180, unsigned int)
+#define MSMFB_SET_SSPP _IOW(MSMFB_IOCTL_MAGIC, 181, struct mdp_overlay_pp_params)
+#define MSMFB_CHANGE_BASE_FPS_LOW  _IOW(MSMFB_IOCTL_MAGIC, 182, unsigned int)
+#define MSMFB_ALL_GC_LUT         _IOWR(MSMFB_IOCTL_MAGIC, 183, struct mdp_all_gc_lut_data)
+#define MSMFB_SPECIFIED_GC_LUT   _IOWR(MSMFB_IOCTL_MAGIC, 184, struct mdp_specified_gc_lut_data)
+
+#define MSMFB_MIPI_DSI_CHECK _IOWR(MSMFB_IOCTL_MAGIC, 185, struct mdp_mipi_check_param)
+#define MSMFB_MIPI_DSI_CLKCHG _IOW(MSMFB_IOCTL_MAGIC, 186, struct mdp_mipi_clkchg_param)
+
 #define FB_TYPE_3D_PANEL 0x10101010
 #define MDP_IMGTYPE2_START 0x10000
 #define MSMFB_DRIVER_VERSION	0xF9E8D701
@@ -107,6 +116,9 @@
 #define MDSS_MDP_HW_REV_110	MDSS_MDP_REV(1, 10, 0) /* 8992 v1.0 */
 #define MDSS_MDP_HW_REV_200	MDSS_MDP_REV(2, 0, 0) /* 8092 v1.0 */
 #define MDSS_MDP_HW_REV_112	MDSS_MDP_REV(1, 12, 0) /* 8952 v1.0 */
+#define MDSS_MDP_HW_REV_114	MDSS_MDP_REV(1, 14, 0) /* 8937 v1.0 */
+#define MDSS_MDP_HW_REV_115	MDSS_MDP_REV(1, 15, 0) /* msmgold */
+#define MDSS_MDP_HW_REV_116	MDSS_MDP_REV(1, 16, 0) /* msmtitanium */
 
 enum {
 	NOTIFY_UPDATE_INIT,
@@ -254,6 +266,11 @@ enum mdss_mdp_max_bw_mode {
 #define MDP_FB_PAGE_PROTECTION_INVALID           (5)
 /* Count of the number of MDP_FB_PAGE_PROTECTION_... values. */
 #define MDP_NUM_FB_PAGE_PROTECTION_VALUES        (5)
+
+#define MDSS_BASE_FPS_30		(30)
+#define MDSS_BASE_FPS_60		(60)
+#define MDSS_BASE_FPS_120		(120)
+#define MDSS_BASE_FPS_DEFAULT	MDSS_BASE_FPS_60
 
 struct mdp_rect {
 	uint32_t x;
@@ -632,6 +649,7 @@ enum {
 };
 struct mdp_overlay_pp_params {
 	uint32_t config_ops;
+	uint32_t csc_cfg_ops;
 	struct mdp_csc_cfg csc_cfg;
 	struct mdp_qseed_cfg qseed_cfg[2];
 	struct mdp_pa_cfg pa_cfg;
@@ -928,6 +946,22 @@ struct mdp_pgc_lut_data_v1_7 {
 	uint32_t  *c0_data;
 	uint32_t  *c1_data;
 	uint32_t  *c2_data;
+};
+
+#define GC_LUT_ENTRIES 256
+struct mdp_all_gc_lut_data {
+	uint32_t ops;
+	uint8_t r_data[GC_LUT_ENTRIES];
+	uint8_t g_data[GC_LUT_ENTRIES];
+	uint8_t b_data[GC_LUT_ENTRIES];
+};
+
+struct mdp_specified_gc_lut_data {
+	uint32_t ops;
+	uint32_t index;
+	uint32_t r_data;
+	uint32_t g_data;
+	uint32_t b_data;
 };
 
 /*
@@ -1366,4 +1400,72 @@ struct mdp_pp_feature_version {
 	uint32_t pp_feature;
 	uint32_t version_info;
 };
+
+#define MDSS_MIPICHK_MANUAL 0
+#define MDSS_MIPICHK_AUTO   1
+#define MDSS_MIPICHK_RESULT_OK 1
+#define MDSS_MIPICHK_RESULT_NG 0
+
+
+#define MDSS_MIPICHK_AMP_NUM 8
+#define MDSS_MIPICHK_SENSITIV_NUM 16
+#define MDSS_MIPICHK_RESULT_NUM (((MDSS_MIPICHK_SENSITIV_NUM + (8 - 1)) / 8) * MDSS_MIPICHK_AMP_NUM)
+
+struct mdp_mipi_check_param {
+	uint8_t frame_cnt;
+	uint8_t amp;
+	uint8_t sensitiv;
+	uint8_t result_master;
+	uint8_t result_slave;
+};
+
+enum {
+	MDP_MIPI_CLKCHG_CKLN_TIMING_START,
+	MDP_MIPI_CLKCHG_CKLN_TIMING_4 = MDP_MIPI_CLKCHG_CKLN_TIMING_START,
+	MDP_MIPI_CLKCHG_CKLN_TIMING_5,
+	MDP_MIPI_CLKCHG_CKLN_TIMING_6,
+	MDP_MIPI_CLKCHG_CKLN_TIMING_7,
+	MDP_MIPI_CLKCHG_CKLN_TIMING_8,
+	MDP_MIPI_CLKCHG_CKLN_TIMING_END = MDP_MIPI_CLKCHG_CKLN_TIMING_8,
+	NUM_MDP_MIPI_CLKCHG_CKLN_TIMING = MDP_MIPI_CLKCHG_CKLN_TIMING_END - MDP_MIPI_CLKCHG_CKLN_TIMING_START + 1,
+
+	MDP_MIPI_CLKCHG_DLN_TIMING_START = MDP_MIPI_CLKCHG_CKLN_TIMING_END + 1,
+	MDP_MIPI_CLKCHG_DLN_TIMING_4 = MDP_MIPI_CLKCHG_DLN_TIMING_START,
+	MDP_MIPI_CLKCHG_DLN_TIMING_5,
+	MDP_MIPI_CLKCHG_DLN_TIMING_6,
+	MDP_MIPI_CLKCHG_DLN_TIMING_7,
+	MDP_MIPI_CLKCHG_DLN_TIMING_8,
+	MDP_MIPI_CLKCHG_DLN_TIMING_9,
+	MDP_MIPI_CLKCHG_DLN_TIMING_10,
+	MDP_MIPI_CLKCHG_DLN_TIMING_END = MDP_MIPI_CLKCHG_DLN_TIMING_10,
+	NUM_MDP_MIPI_CLKCHG_DLN_TIMING = MDP_MIPI_CLKCHG_DLN_TIMING_END - MDP_MIPI_CLKCHG_DLN_TIMING_START + 1,
+
+	NUM_MDP_MIPI_CLKCHG_TIMING = MDP_MIPI_CLKCHG_DLN_TIMING_END + 1
+};
+
+struct mdp_mipi_clkchg_host {
+	unsigned int clock_rate;
+	unsigned short display_width;
+	unsigned short display_height;
+	unsigned short hsync_pulse_width;
+	unsigned short h_back_porch;
+	unsigned short h_front_porch;
+	unsigned short vsync_pulse_width;
+	unsigned short v_back_porch;
+	unsigned short v_front_porch;
+	unsigned char t_clk_post;
+	unsigned char t_clk_pre;
+	unsigned char timing_ctrl[NUM_MDP_MIPI_CLKCHG_TIMING];
+};
+
+typedef union mdp_mipi_clkchg_panel_tag {
+/* Please insert panel driver parameters here, if need. */
+} mdp_mipi_clkchg_panel_t;
+
+struct mdp_mipi_clkchg_param {
+	struct mdp_mipi_clkchg_host host;
+	mdp_mipi_clkchg_panel_t panel;
+	int internal_osc;
+};
+
 #endif /*_UAPI_MSM_MDP_H_*/

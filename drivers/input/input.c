@@ -29,6 +29,10 @@
 #include <linux/rcupdate.h>
 #include "input-compat.h"
 
+#ifdef CONFIG_SHLOG_SYSTEM
+#include <linux/hrtimer.h>
+#endif /* CONFIG_SHLOG_SYSTEM */
+
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@suse.cz>");
 MODULE_DESCRIPTION("Input core");
 MODULE_LICENSE("GPL");
@@ -49,6 +53,12 @@ static LIST_HEAD(input_handler_list);
 static DEFINE_MUTEX(input_mutex);
 
 static const struct input_value input_value_sync = { EV_SYN, SYN_REPORT, 1 };
+
+#ifdef CONFIG_SHLOG_SYSTEM
+struct hrtimer panic_timer;
+static int panic_time = PANIC_TIME;
+module_param_named(panic_time, panic_time, int, S_IRUGO | S_IWUSR | S_IWGRP);
+#endif /* CONFIG_SHLOG_SYSTEM */
 
 static inline int is_event_supported(unsigned int code,
 				     unsigned long *bm, unsigned int max)
@@ -292,6 +302,25 @@ static int input_get_disposition(struct input_dev *dev,
 
 				__change_bit(code, dev->key);
 				disposition = INPUT_PASS_TO_HANDLERS;
+
+#ifdef CONFIG_SHLOG_SYSTEM
+#ifdef SVERSION_OF_SOFT
+				if (strncmp(SVERSION_OF_SOFT,"S",1) != 0) {
+					if(code == KEY_POWER){
+						ktime_t ptime;
+						ptime = ktime_set(panic_time, 0);
+
+						if(value){
+							hrtimer_start(&panic_timer, ptime, HRTIMER_MODE_REL);
+						}
+						else{
+							hrtimer_try_to_cancel(&panic_timer);
+						}
+					}
+				}
+#endif
+#endif /* CONFIG_SHLOG_SYSTEM */
+
 			}
 		}
 		break;
@@ -1691,6 +1720,10 @@ static int input_dev_suspend(struct device *dev)
 	/* Turn off LEDs and sounds, if any are active. */
 	input_dev_toggle(input_dev, false);
 
+#ifdef CONFIG_SHLOG_SYSTEM
+	hrtimer_try_to_cancel(&panic_timer);
+#endif /* CONFIG_SHLOG_SYSTEM */
+
 	spin_unlock_irq(&input_dev->event_lock);
 
 	return 0;
@@ -2401,6 +2434,18 @@ void input_free_minor(unsigned int minor)
 }
 EXPORT_SYMBOL(input_free_minor);
 
+#ifdef CONFIG_SHLOG_SYSTEM
+static enum hrtimer_restart input_panic_timer_expired(struct hrtimer *timer)
+{
+#ifdef SVERSION_OF_SOFT
+	if (strncmp(SVERSION_OF_SOFT,"S",1) != 0) {
+		panic("POWER KEY %d s pressed\n", panic_time);
+	}
+#endif
+	return HRTIMER_NORESTART;
+}
+#endif /* CONFIG_SHLOG_SYSTEM */
+
 static int __init input_init(void)
 {
 	int err;
@@ -2421,6 +2466,11 @@ static int __init input_init(void)
 		pr_err("unable to register char major %d", INPUT_MAJOR);
 		goto fail2;
 	}
+
+#ifdef CONFIG_SHLOG_SYSTEM
+	hrtimer_init(&panic_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	panic_timer.function = input_panic_timer_expired;
+#endif /* CONFIG_SHLOG_SYSTEM */
 
 	return 0;
 

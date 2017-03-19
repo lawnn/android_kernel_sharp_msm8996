@@ -27,11 +27,20 @@
 #include "sd.h"
 #include "sd_ops.h"
 
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+#include "../card/sh_sd_battlog.h"
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
+
 #define UHS_SDR104_MIN_DTR	(100 * 1000 * 1000)
 #define UHS_DDR50_MIN_DTR	(50 * 1000 * 1000)
 #define UHS_SDR50_MIN_DTR	(50 * 1000 * 1000)
 #define UHS_SDR25_MIN_DTR	(25 * 1000 * 1000)
 #define UHS_SDR12_MIN_DTR	(12.5 * 1000 * 1000)
+
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+extern char sh_sd_card_type[8];
+extern char sh_sd_clk_mode[8];
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
@@ -72,6 +81,10 @@ static const unsigned int sd_au_size[] = {
 			__res |= resp[__off-1] << ((32 - __shft) % 32);	\
 		__res & __mask;						\
 	})
+
+#ifdef CONFIG_MMC_SD_PENDING_RESUME_CUST_SH
+bool sh_mmc_pending_resume = false;
+#endif /* CONFIG_MMC_SD_PENDING_RESUME_CUST_SH */
 
 /*
  * Given the decoded CSD structure, decode the raw CID to our CID structure.
@@ -331,6 +344,15 @@ static int mmc_read_switch(struct mmc_card *card)
 	if (status[13] & SD_MODE_HIGH_SPEED)
 		card->sw_caps.hs_max_dtr = HIGH_SPEED_MAX_DTR;
 
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	if (status[13] & SD_MODE_UHS_SDR104)
+		strncpy(sh_sd_card_type, "U104", sizeof(sh_sd_card_type));
+	else if (status[13] & SD_MODE_UHS_DDR50)
+		strncpy(sh_sd_card_type, "U050", sizeof(sh_sd_card_type));
+	else if (status[13] & SD_MODE_HIGH_SPEED)
+		strncpy(sh_sd_card_type, "HSPD", sizeof(sh_sd_card_type));
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
+
 	if (card->scr.sda_spec3) {
 		card->sw_caps.sd3_bus_mode = status[13];
 		/* Driver Strengths supported by the card */
@@ -469,10 +491,16 @@ static void sd_update_bus_speed_mode(struct mmc_card *card)
 	    (card->sw_caps.sd3_bus_mode & SD_MODE_UHS_SDR104) &&
 	    (card->host->f_max > UHS_SDR104_MIN_DTR)) {
 			card->sd_bus_speed = UHS_SDR104_BUS_SPEED;
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+			strncpy(sh_sd_clk_mode, "S104", sizeof(sh_sd_clk_mode));
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 	} else if ((card->host->caps & MMC_CAP_UHS_DDR50) &&
 		   (card->sw_caps.sd3_bus_mode & SD_MODE_UHS_DDR50) &&
 		    (card->host->f_max > UHS_DDR50_MIN_DTR)) {
 			card->sd_bus_speed = UHS_DDR50_BUS_SPEED;
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+			strncpy(sh_sd_clk_mode, "D050", sizeof(sh_sd_clk_mode));
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 	} else if ((card->host->caps & (MMC_CAP_UHS_SDR104 |
 		    MMC_CAP_UHS_SDR50)) && (card->sw_caps.sd3_bus_mode &
 		    SD_MODE_UHS_SDR50) &&
@@ -971,6 +999,9 @@ int mmc_sd_setup_card(struct mmc_host *host, struct mmc_card *card,
 	return 0;
 }
 
+#ifdef CONFIG_MMC_SD_ECO_MODE_CUST_SH
+extern int sh_mmc_sd_eco_mode_current;
+#endif /* CONFIG_MMC_SD_ECO_MODE_CUST_SH */
 unsigned mmc_sd_get_max_clock(struct mmc_card *card)
 {
 	unsigned max_dtr = (unsigned int)-1;
@@ -979,11 +1010,31 @@ unsigned mmc_sd_get_max_clock(struct mmc_card *card)
 		if (max_dtr > card->sw_caps.uhs_max_dtr)
 			max_dtr = card->sw_caps.uhs_max_dtr;
 	} else if (mmc_card_hs(card)) {
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+		strncpy(sh_sd_clk_mode, "HSPD", sizeof(sh_sd_clk_mode));
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
+#ifdef CONFIG_MMC_SD_ECO_MODE_CUST_SH
+		pr_info("%s: mmc_sd_get_max_clock: mode: %s\n",
+			mmc_hostname(card->host),
+			(sh_mmc_sd_eco_mode_current ? "eco" : "normal"));
+		if (sh_mmc_sd_eco_mode_current)
+			card->sw_caps.hs_max_dtr = HIGH_SPEED_MAX_DTR_ECO;
+		else
+			card->sw_caps.hs_max_dtr = HIGH_SPEED_MAX_DTR;
+#endif /* CONFIG_MMC_SD_ECO_MODE_CUST_SH */
 		if (max_dtr > card->sw_caps.hs_max_dtr)
 			max_dtr = card->sw_caps.hs_max_dtr;
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	} else {
+		strncpy(sh_sd_clk_mode, "DSPD", sizeof(sh_sd_clk_mode));
+		if (max_dtr > card->csd.max_dtr)
+			max_dtr = card->csd.max_dtr;
+	}
+#else /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 	} else if (max_dtr > card->csd.max_dtr) {
 		max_dtr = card->csd.max_dtr;
 	}
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 	return max_dtr;
 }
@@ -1079,6 +1130,10 @@ static int mmc_sd_init_card(struct mmc_host *host, u32 ocr,
 			mmc_set_timing(card->host, MMC_TIMING_SD_HS);
 		else if (err)
 			goto free_card;
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+		else if (err == 0)
+			strncpy(sh_sd_card_type, "DSPD", sizeof(sh_sd_card_type));
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 		/*
 		 * Set bus speed.
@@ -1224,7 +1279,16 @@ static int mmc_sd_suspend(struct mmc_host *host)
 {
 	int err;
 
+#ifdef CONFIG_MMC_SD_PENDING_RESUME_CUST_SH
+	if(sh_mmc_pending_resume) {
+		sh_mmc_pending_resume = false;
+		err = 0;
+	} else {
+		err = _mmc_sd_suspend(host);
+	}
+#else /* CONFIG_MMC_SD_PENDING_RESUME_CUST_SH */
 	err = _mmc_sd_suspend(host);
+#endif /* CONFIG_MMC_SD_PENDING_RESUME_CUST_SH */
 	if (!err) {
 		pm_runtime_disable(&host->card->dev);
 		pm_runtime_set_suspended(&host->card->dev);
@@ -1275,6 +1339,10 @@ static int _mmc_sd_resume(struct mmc_host *host)
 #endif
 	mmc_card_clr_suspended(host->card);
 
+#ifdef CONFIG_MMC_SD_PENDING_RESUME_CUST_SH
+	sh_mmc_pending_resume = false;
+#endif /* CONFIG_MMC_SD_PENDING_RESUME_CUST_SH */
+
 	err = mmc_resume_clk_scaling(host);
 	if (err) {
 		pr_err("%s: %s: fail to resume clock scaling (%d)\n",
@@ -1295,7 +1363,11 @@ static int mmc_sd_resume(struct mmc_host *host)
 	int err = 0;
 
 	if (!(host->caps & MMC_CAP_RUNTIME_RESUME)) {
+#ifdef CONFIG_MMC_SD_PENDING_RESUME_CUST_SH
+		sh_mmc_pending_resume = true;
+#else /* CONFIG_MMC_SD_PENDING_RESUME_CUST_SH */
 		err = _mmc_sd_resume(host);
+#endif /* CONFIG_MMC_SD_PENDING_RESUME_CUST_SH */
 		pm_runtime_set_active(&host->card->dev);
 		pm_runtime_mark_last_busy(&host->card->dev);
 	}
@@ -1371,6 +1443,9 @@ static const struct mmc_bus_ops mmc_sd_ops = {
 	.runtime_resume = mmc_sd_runtime_resume,
 	.suspend = mmc_sd_suspend,
 	.resume = mmc_sd_resume,
+#ifdef CONFIG_MMC_SD_PENDING_RESUME_CUST_SH
+	.resume_pending = _mmc_sd_resume,
+#endif /* CONFIG_MMC_SD_PENDING_RESUME_CUST_SH */
 	.power_restore = mmc_sd_power_restore,
 	.alive = mmc_sd_alive,
 	.change_bus_speed = mmc_sd_change_bus_speed,
@@ -1391,8 +1466,16 @@ int mmc_attach_sd(struct mmc_host *host)
 	WARN_ON(!host->claimed);
 
 	err = mmc_send_app_op_cond(host, 0, &ocr);
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	if (err) {
+		if (mmc_detection_status_check(host))
+			mmc_post_detection(host, SD_DETECT_FAILED);
+		return err;
+	}
+#else /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 	if (err)
 		return err;
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 	mmc_attach_bus(host, &mmc_sd_ops);
 	if (host->ocr_avail_sd)
@@ -1458,6 +1541,10 @@ int mmc_attach_sd(struct mmc_host *host)
 	if (err)
 		goto remove_card;
 
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	mmc_post_detection(host, SD_DETECTED);
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
+
 	return 0;
 
 remove_card:
@@ -1470,6 +1557,10 @@ err:
 
 	pr_err("%s: error %d whilst initialising SD card\n",
 		mmc_hostname(host), err);
+
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	mmc_post_detection(host, SD_DETECT_FAILED);
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 	return err;
 }

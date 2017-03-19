@@ -26,6 +26,9 @@ struct anon_vma_chain;
 struct file_ra_state;
 struct user_struct;
 struct writeback_control;
+#ifdef CONFIG_SHSYS_CUST
+struct super_block;
+#endif	//CONFIG_SHSYS_CUST
 
 #ifndef CONFIG_NEED_MULTIPLE_NODES	/* Don't use mapnrs, do it properly */
 extern unsigned long max_mapnr;
@@ -1900,8 +1903,15 @@ vm_unmapped_area(struct vm_unmapped_area_info *info)
 
 /* truncate.c */
 extern void truncate_inode_pages(struct address_space *, loff_t);
+#ifdef CONFIG_SHSYS_CUST
+extern void truncate_inode_pages_fill_zero(struct address_space *, loff_t);
+#endif	//CONFIG_SHSYS_CUST
 extern void truncate_inode_pages_range(struct address_space *,
 				       loff_t lstart, loff_t lend);
+#ifdef CONFIG_SHSYS_CUST
+extern void truncate_inode_pages_range_fill_zero(struct address_space *,
+				       loff_t lstart, loff_t lend);
+#endif	//CONFIG_SHSYS_CUST
 extern void truncate_inode_pages_final(struct address_space *);
 
 /* generic vm_area_ops exported for stackable file systems */
@@ -2085,6 +2095,10 @@ int drop_caches_sysctl_handler(struct ctl_table *, int,
 					void __user *, size_t *, loff_t *);
 #endif
 
+
+#ifdef CONFIG_SHSYS_CUST
+void drop_pagecache_sb(struct super_block *sb, void *unused);
+#endif	//CONFIG_SHSYS_CUST
 unsigned long shrink_slab(struct shrink_control *shrink,
 			  unsigned long nr_pages_scanned,
 			  unsigned long lru_pages);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -652,9 +652,9 @@ static u32 get_frame_size(struct msm_vidc_inst *inst,
 		frame_size = fmt->get_frame_size(plane,
 					inst->capability.mbs_per_frame.max,
 					MB_SIZE_IN_PIXEL);
-		if (inst->capability.buffer_size_limit &&
-			(inst->capability.buffer_size_limit < frame_size)) {
-			frame_size = inst->capability.buffer_size_limit;
+		if (inst->buffer_size_limit &&
+			(inst->buffer_size_limit < frame_size)) {
+			frame_size = inst->buffer_size_limit;
 			dprintk(VIDC_DBG, "input buffer size limited to %d\n",
 				frame_size);
 		} else {
@@ -1752,6 +1752,81 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 	return rc;
 }
 
+static inline int set_max_internal_buffers_size(struct msm_vidc_inst *inst)
+{
+	int rc = 0;
+	struct {
+		enum hal_buffer type;
+		struct hal_buffer_requirements *req;
+		size_t size;
+	} internal_buffers[] = {
+		{ HAL_BUFFER_INTERNAL_SCRATCH, NULL, 0},
+		{ HAL_BUFFER_INTERNAL_SCRATCH_1, NULL, 0},
+		{ HAL_BUFFER_INTERNAL_SCRATCH_2, NULL, 0},
+		{ HAL_BUFFER_INTERNAL_PERSIST, NULL, 0},
+		{ HAL_BUFFER_INTERNAL_PERSIST_1, NULL, 0},
+	};
+
+	struct hal_frame_size frame_sz;
+	int i;
+
+	frame_sz.buffer_type = HAL_BUFFER_INPUT;
+	frame_sz.width = inst->capability.width.max;
+	frame_sz.height =
+		(inst->capability.mbs_per_frame.max * 256) /
+		inst->capability.width.max;
+
+	dprintk(VIDC_DBG,
+		"Max buffer reqs, buffer type = %d width = %d, height = %d, max_mbs_per_frame = %d\n",
+		frame_sz.buffer_type, frame_sz.width,
+		frame_sz.height, inst->capability.mbs_per_frame.max);
+
+	msm_comm_try_set_prop(inst, HAL_PARAM_FRAME_SIZE, &frame_sz);
+	rc = msm_comm_try_get_bufreqs(inst);
+	if (rc) {
+		dprintk(VIDC_ERR,
+			"%s Failed to get max buf req, %d\n", __func__, rc);
+		return 0;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(internal_buffers); i++) {
+		internal_buffers[i].req =
+			get_buff_req_buffer(inst, internal_buffers[i].type);
+		internal_buffers[i].size = internal_buffers[i].req ?
+			internal_buffers[i].req->buffer_size : 0;
+	}
+
+	frame_sz.buffer_type = HAL_BUFFER_INPUT;
+	frame_sz.width = inst->prop.width[OUTPUT_PORT];
+	frame_sz.height = inst->prop.height[OUTPUT_PORT];
+
+	msm_comm_try_set_prop(inst, HAL_PARAM_FRAME_SIZE, &frame_sz);
+	rc = msm_comm_try_get_bufreqs(inst);
+	if (rc) {
+		dprintk(VIDC_ERR,
+			"%s Failed to get back old buf req, %d\n",
+			__func__, rc);
+		return rc;
+	}
+
+	dprintk(VIDC_DBG,
+			"Old buffer reqs, buffer type = %d width = %d, height = %d\n",
+			frame_sz.buffer_type, frame_sz.width,
+			frame_sz.height);
+
+	for (i = 0; i < ARRAY_SIZE(internal_buffers); i++) {
+		if (internal_buffers[i].req) {
+			internal_buffers[i].req->buffer_size =
+				internal_buffers[i].size;
+			dprintk(VIDC_DBG,
+				"Changing buffer type : %d size to : %zd\n",
+				internal_buffers[i].type,
+				internal_buffers[i].size);
+		}
+	}
+	return 0;
+}
+
 static inline int start_streaming(struct msm_vidc_inst *inst)
 {
 	int rc = 0;
@@ -1765,6 +1840,15 @@ static inline int start_streaming(struct msm_vidc_inst *inst)
 	if (rc) {
 		dprintk(VIDC_ERR, "H/w scaling is not in valid range\n");
 		return -EINVAL;
+	}
+	if ((inst->flags & VIDC_SECURE) && !inst->in_reconfig) {
+		rc = set_max_internal_buffers_size(inst);
+		if (rc) {
+			dprintk(VIDC_ERR,
+				"Failed to set max scratch buffer size: %d\n",
+				rc);
+			goto fail_start;
+		}
 	}
 	rc = msm_comm_set_scratch_buffers(inst);
 	if (rc) {
@@ -1966,13 +2050,13 @@ int msm_vdec_inst_init(struct msm_vidc_inst *inst)
 	inst->capability.height.max = DEFAULT_HEIGHT;
 	inst->capability.width.min = MIN_SUPPORTED_WIDTH;
 	inst->capability.width.max = DEFAULT_WIDTH;
-	inst->capability.buffer_mode[OUTPUT_PORT] = HAL_BUFFER_MODE_STATIC;
-	inst->capability.buffer_mode[CAPTURE_PORT] = HAL_BUFFER_MODE_STATIC;
+	inst->capability.alloc_mode_in = HAL_BUFFER_MODE_STATIC;
+	inst->capability.alloc_mode_out = HAL_BUFFER_MODE_STATIC;
 	inst->capability.secure_output2_threshold.min = 0;
 	inst->capability.secure_output2_threshold.max = 0;
 	inst->buffer_mode_set[OUTPUT_PORT] = HAL_BUFFER_MODE_STATIC;
 	inst->buffer_mode_set[CAPTURE_PORT] = HAL_BUFFER_MODE_STATIC;
-	inst->prop.fps = 30;
+	inst->prop.fps = DEFAULT_FPS;
 	return rc;
 }
 
@@ -2397,10 +2481,10 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		alloc_mode.buffer_mode = get_buf_type(ctrl->val);
 
 		if (!(alloc_mode.buffer_mode &
-			inst->capability.buffer_mode[CAPTURE_PORT])) {
-			dprintk(VIDC_ERR,
-				"buffer mode[%d] not supported for Capture Port\n",
-				ctrl->val);
+			inst->capability.alloc_mode_out)) {
+			dprintk(VIDC_WARN,
+				"buffer mode[%d] not supported for capture port[0x%x]\n",
+				ctrl->val, inst->capability.alloc_mode_out);
 			rc = -ENOTSUPP;
 			break;
 		}
@@ -2541,9 +2625,10 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 		pdata = &profile_level;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_BUFFER_SIZE_LIMIT:
-		inst->capability.buffer_size_limit = ctrl->val;
 		dprintk(VIDC_DBG,
-			"Limiting input buffer size to :%u\n", ctrl->val);
+			"Limiting input buffer size from %u to %u\n",
+			inst->buffer_size_limit, ctrl->val);
+		inst->buffer_size_limit = ctrl->val;
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_NON_SECURE_OUTPUT2:
 		property_id = HAL_PARAM_VDEC_NON_SECURE_OUTPUT2;

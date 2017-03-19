@@ -51,6 +51,7 @@ struct cpufreq_interactive_policyinfo {
 	u64 max_freq_hyst_start_time;
 	struct rw_semaphore enable_sem;
 	bool reject_notification;
+	bool notif_pending;
 	int governor_enabled;
 	struct cpufreq_interactive_tunables *cached_tunables;
 	struct sched_load *sl;
@@ -433,7 +434,7 @@ static u64 update_load(int cpu)
 }
 
 #define NEW_TASK_RATIO 75
-static void __cpufreq_interactive_timer(unsigned long data, bool is_notif)
+static void cpufreq_interactive_timer(unsigned long data)
 {
 	u64 now;
 	unsigned int delta_time;
@@ -462,12 +463,15 @@ static void __cpufreq_interactive_timer(unsigned long data, bool is_notif)
 		goto exit;
 
 	fcpu = cpumask_first(ppol->policy->related_cpus);
-	skip_hispeed_logic = tunables->ignore_hispeed_on_notif && is_notif;
-	skip_min_sample_time = tunables->fast_ramp_down && is_notif;
-
 	now = ktime_to_us(ktime_get());
+
 	spin_lock_irqsave(&ppol->target_freq_lock, flags);
 	spin_lock(&ppol->load_lock);
+
+	skip_hispeed_logic = tunables->ignore_hispeed_on_notif &&
+						ppol->notif_pending;
+	skip_min_sample_time = tunables->fast_ramp_down && ppol->notif_pending;
+	ppol->notif_pending = false;
 	ppol->last_evaluated_jiffy = get_jiffies_64();
 
 	if (tunables->use_sched_load)
@@ -480,7 +484,10 @@ static void __cpufreq_interactive_timer(unsigned long data, bool is_notif)
 			cputime_speedadj = (u64)sl->prev_load *
 					   ppol->policy->cpuinfo.max_freq;
 			do_div(cputime_speedadj, tunables->timer_rate);
-			new_load_pct = sl->new_task_load * 100 / sl->prev_load;
+			new_load_pct = 0;
+			if (sl->prev_load)
+				new_load_pct = sl->new_task_load * 100 /
+						sl->prev_load;
 		} else {
 			now = update_load(i);
 			delta_time = (unsigned int)
@@ -619,7 +626,7 @@ static void __cpufreq_interactive_timer(unsigned long data, bool is_notif)
 	spin_lock_irqsave(&speedchange_cpumask_lock, flags);
 	cpumask_set_cpu(max_cpu, &speedchange_cpumask);
 	spin_unlock_irqrestore(&speedchange_cpumask_lock, flags);
-	wake_up_process(speedchange_task);
+	wake_up_process_no_notif(speedchange_task);
 
 rearm:
 	if (!timer_pending(&ppol->policy_timer))
@@ -644,11 +651,6 @@ rearm:
 exit:
 	up_read(&ppol->enable_sem);
 	return;
-}
-
-static void cpufreq_interactive_timer(unsigned long data)
-{
-	__cpufreq_interactive_timer(data, false);
 }
 
 static int cpufreq_interactive_speedchange_task(void *data)
@@ -740,7 +742,7 @@ static void cpufreq_interactive_boost(struct cpufreq_interactive_tunables *tunab
 	spin_unlock_irqrestore(&speedchange_cpumask_lock, flags[0]);
 
 	if (anyboost)
-		wake_up_process(speedchange_task);
+		wake_up_process_no_notif(speedchange_task);
 }
 
 static int load_change_callback(struct notifier_block *nb, unsigned long val,
@@ -749,6 +751,7 @@ static int load_change_callback(struct notifier_block *nb, unsigned long val,
 	unsigned long cpu = (unsigned long) data;
 	struct cpufreq_interactive_policyinfo *ppol = per_cpu(polinfo, cpu);
 	struct cpufreq_interactive_tunables *tunables;
+	unsigned long flags;
 
 	if (speedchange_task == current)
 		return 0;
@@ -768,9 +771,12 @@ static int load_change_callback(struct notifier_block *nb, unsigned long val,
 	}
 
 	trace_cpufreq_interactive_load_change(cpu);
+	spin_lock_irqsave(&ppol->target_freq_lock, flags);
+	ppol->notif_pending = true;
+	spin_unlock_irqrestore(&ppol->target_freq_lock, flags);
 	del_timer(&ppol->policy_timer);
 	del_timer(&ppol->policy_slack_timer);
-	__cpufreq_interactive_timer(cpu, true);
+	cpufreq_interactive_timer(cpu);
 
 	up_read(&ppol->enable_sem);
 	return 0;
@@ -1692,6 +1698,7 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 		ppol->hispeed_validate_time = ppol->floor_validate_time;
 		ppol->min_freq = policy->min;
 		ppol->reject_notification = true;
+		ppol->notif_pending = false;
 		down_write(&ppol->enable_sem);
 		del_timer_sync(&ppol->policy_timer);
 		del_timer_sync(&ppol->policy_slack_timer);
@@ -1768,7 +1775,7 @@ static int __init cpufreq_interactive_init(void)
 	get_task_struct(speedchange_task);
 
 	/* NB: wake up so the thread does not look hung to the freezer */
-	wake_up_process(speedchange_task);
+	wake_up_process_no_notif(speedchange_task);
 
 	return cpufreq_register_governor(&cpufreq_gov_interactive);
 }

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -372,7 +372,6 @@ static int hdmi_hdcp_authentication_part1(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	ddc_data.request_len = 1;
 	ddc_data.retry = 5;
 	ddc_data.what = "Bcaps";
-	ddc_data.no_align = true;
 
 	hdcp_ctrl->init_data.ddc_ctrl->ddc_data = ddc_data;
 
@@ -574,7 +573,6 @@ static int hdmi_hdcp_authentication_part1(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	ddc_data.request_len = 5;
 	ddc_data.retry = 5;
 	ddc_data.what = "Bksv";
-	ddc_data.no_align = true;
 
 	hdcp_ctrl->init_data.ddc_ctrl->ddc_data = ddc_data;
 
@@ -649,7 +647,6 @@ static int hdmi_hdcp_authentication_part1(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	ddc_data.request_len = 2;
 	ddc_data.retry = 5;
 	ddc_data.what = "R0'";
-	ddc_data.no_align = true;
 
 	hdcp_ctrl->init_data.ddc_ctrl->ddc_data = ddc_data;
 
@@ -758,7 +755,6 @@ static int hdmi_hdcp_transfer_v_h(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	ddc_data.request_len = 4;
 	ddc_data.retry = 5;
 	ddc_data.what = what;
-	ddc_data.no_align = true;
 
 	if (hdcp_ctrl->tz_hdcp) {
 		memset(scm_buf, 0x00, sizeof(scm_buf));
@@ -888,7 +884,7 @@ static int hdmi_hdcp_authentication_part2(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 		ddc_data.request_len = 1;
 		ddc_data.retry = 5;
 		ddc_data.what = "Bcaps";
-		ddc_data.no_align = false;
+		ddc_data.retry_align = true;
 
 		hdcp_ctrl->init_data.ddc_ctrl->ddc_data = ddc_data;
 
@@ -910,7 +906,7 @@ static int hdmi_hdcp_authentication_part2(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	ddc_data.request_len = 2;
 	ddc_data.retry = 5;
 	ddc_data.what = "Bstatuss";
-	ddc_data.no_align = false;
+	ddc_data.retry_align = true;
 
 	hdcp_ctrl->init_data.ddc_ctrl->ddc_data = ddc_data;
 
@@ -1005,7 +1001,6 @@ static int hdmi_hdcp_authentication_part2(struct hdmi_hdcp_ctrl *hdcp_ctrl)
 	ddc_data.request_len = ksv_bytes;
 	ddc_data.retry = 5;
 	ddc_data.what = "KSV FIFO";
-	ddc_data.no_align = true;
 
 	hdcp_ctrl->init_data.ddc_ctrl->ddc_data = ddc_data;
 
@@ -1368,15 +1363,6 @@ int hdmi_hdcp_reauthenticate(void *input)
 		return 0;
 	}
 
-	/*
-	 * Disable HPD circuitry.
-	 * This is needed to reset the HDCP cipher engine so that when we
-	 * attempt a re-authentication, HW would clear the AN0_READY and
-	 * AN1_READY bits in HDMI_HDCP_LINK0_STATUS register
-	 */
-	DSS_REG_W(io, HDMI_HPD_CTRL, DSS_REG_R(hdcp_ctrl->init_data.core_io,
-		HDMI_HPD_CTRL) & ~BIT(28));
-
 	hdmi_hw_version = DSS_REG_R(io, HDMI_VERSION);
 	if (hdmi_hw_version >= 0x30030000) {
 		DSS_REG_W(io, HDMI_CTRL_SW_RESET, BIT(1));
@@ -1393,11 +1379,6 @@ int hdmi_hdcp_reauthenticate(void *input)
 
 	/* Disable encryption and disable the HDCP block */
 	DSS_REG_W(io, HDMI_HDCP_CTRL, 0);
-
-	/* Enable HPD circuitry */
-	DSS_REG_W(hdcp_ctrl->init_data.core_io, HDMI_HPD_CTRL,
-		DSS_REG_R(hdcp_ctrl->init_data.core_io,
-		HDMI_HPD_CTRL) | BIT(28));
 
 	/* Restart authentication attempt */
 	DEV_DBG("%s: %s: Scheduling work to start HDCP authentication",

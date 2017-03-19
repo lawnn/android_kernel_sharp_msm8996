@@ -56,6 +56,7 @@
 
 #define MDP_PP_AD_BL_LINEAR	0x0
 #define MDP_PP_AD_BL_LINEAR_INV	0x1
+#define MAX_LAYER_COUNT		0xC
 
 /**
  * enum mdp_notify_event - Different frame events to indicate frame update state
@@ -208,6 +209,8 @@ struct msm_mdp_interface {
 					struct mdp_display_commit *data);
 	int (*atomic_validate)(struct msm_fb_data_type *mfd, struct file *file,
 				struct mdp_layer_commit_v1 *commit);
+	bool (*is_config_same)(struct msm_fb_data_type *mfd,
+				struct mdp_output_layer *layer);
 	int (*pre_commit)(struct msm_fb_data_type *mfd, struct file *file,
 				struct mdp_layer_commit_v1 *commit);
 	int (*pre_commit_fnc)(struct msm_fb_data_type *mfd);
@@ -224,6 +227,7 @@ struct msm_mdp_interface {
 		int *bl_out, bool *bl_out_notify);
 	int (*panel_register_done)(struct mdss_panel_data *pdata);
 	u32 (*fb_stride)(u32 fb_index, u32 xres, int bpp);
+	struct mdss_mdp_format_params *(*get_format_params)(u32 format);
 	int (*splash_init_fnc)(struct msm_fb_data_type *mfd);
 	struct msm_sync_pt_data *(*get_sync_fnc)(struct msm_fb_data_type *mfd,
 				const struct mdp_buf_sync *buf_sync);
@@ -237,9 +241,9 @@ struct msm_mdp_interface {
 
 #define IS_CALIB_MODE_BL(mfd) (((mfd)->calib_mode) & MDSS_CALIB_MODE_BL)
 #define MDSS_BRIGHT_TO_BL(out, v, bl_max, max_bright) do {\
-					out = (2 * (v) * (bl_max) + max_bright)\
-					/ (2 * max_bright);\
-					} while (0)
+				out = (2 * (v) * (bl_max) + max_bright);\
+				do_div(out, 2 * max_bright);\
+				} while (0)
 
 struct mdss_fb_file_info {
 	struct file *file;
@@ -300,7 +304,7 @@ struct msm_fb_data_type {
 	u32 bl_scale;
 	u32 bl_min_lvl;
 	u32 unset_bl_level;
-	u32 bl_updated;
+	bool allow_bl_update;
 	u32 bl_level_scaled;
 	struct mutex bl_lock;
 	bool ipc_resume;
@@ -344,6 +348,12 @@ struct msm_fb_data_type {
 	struct sg_table *fb_table;
 
 	bool mdss_fb_split_stored;
+#ifdef CONFIG_SHDISP /* CUST_ID_00054 */
+	struct completion panel_state_chg_comp;
+#endif  /* CONFIG_SHDISP */
+#ifdef CONFIG_SHDISP /* CUST_ID_00051 */
+	bool kickoff_with_recovery;
+#endif  /* CONFIG_SHDISP */
 
 	u32 wait_for_kickoff;
 	u32 thermal_level;
@@ -449,4 +459,19 @@ u32 mdss_fb_get_mode_switch(struct msm_fb_data_type *mfd);
 void mdss_fb_report_panel_dead(struct msm_fb_data_type *mfd);
 void mdss_panelinfo_to_fb_var(struct mdss_panel_info *pinfo,
 						struct fb_var_screeninfo *var);
+#ifdef CONFIG_SHDISP /* CUST_ID_00035 */
+int mdss_fb_base_fps_low_mode(void);
+#endif /* CONFIG_SHDISP */
+
+#ifdef CONFIG_SHDISP /* CUST_ID_00037 */
+#ifdef CONFIG_DEBUG_FS
+void mdss_mdp_fps_create_debugfs(struct msm_fb_data_type *mfd);
+#else /* CONFIG_DEBUG_FS */
+static inline void mdss_mdp_fps_create_debugfs(struct msm_fb_data_type *mfd)
+{
+	/* empty */
+}
+#endif /* CONFIG_DEBUG_FS */
+#endif /* CONFIG_SHDISP */
+
 #endif /* MDSS_FB_H */

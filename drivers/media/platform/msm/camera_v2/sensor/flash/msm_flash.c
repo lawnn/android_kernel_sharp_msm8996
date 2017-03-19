@@ -18,6 +18,9 @@
 #include "msm_flash.h"
 #include "msm_camera_dt_util.h"
 #include "msm_cci.h"
+/* SHLOCAL_CAMERA_IMAGE_QUALITY-> */
+#include <media/msm_cam_sensor.h>
+/* SHLOCAL_CAMERA_IMAGE_QUALITY<- */
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -513,7 +516,13 @@ static int32_t msm_flash_low(
 				max_current) {
 				curr = flash_data->flash_current[i];
 			} else {
+/* SHLOCAL_CAMERA_IMAGE_QUALITY-> */
+#ifdef SHCAM_PICT
+				curr = SHCAM_LED_TORCH_CURRENT;
+#else
 				curr = flash_ctrl->torch_op_current[i];
+#endif
+/* SHLOCAL_CAMERA_IMAGE_QUALITY<- */
 				pr_debug("LED current clamped to %d\n",
 					curr);
 			}
@@ -527,6 +536,35 @@ static int32_t msm_flash_low(
 	CDBG("Exit\n");
 	return 0;
 }
+
+/* SHLOCAL_CAMERA_IMAGE_QUALITY-> */
+static int32_t msm_flash_preflash(
+	struct msm_flash_ctrl_t *flash_ctrl,
+	struct msm_flash_cfg_data_t *flash_data)
+{
+	int32_t i = 0;
+
+	CDBG("Enter\n");
+
+	/* Turn off flash triggers */
+	for (i = 0; i < flash_ctrl->flash_num_sources; i++)
+		if (flash_ctrl->flash_trigger[i])
+			led_trigger_event(flash_ctrl->flash_trigger[i], 0);
+
+	/* Turn on flash triggers */
+	for (i = 0; i < flash_ctrl->torch_num_sources; i++) {
+		if (flash_ctrl->torch_trigger[i]) {
+			led_trigger_event(flash_ctrl->torch_trigger[i], SHCAM_LED_PREFLASH_CURRENT);
+		}
+	}
+	if (flash_ctrl->switch_trigger){
+		led_trigger_event(flash_ctrl->switch_trigger, 1);
+	}
+
+	CDBG("Exit\n");
+	return 0;
+}
+/* SHLOCAL_CAMERA_IMAGE_QUALITY<- */
 
 static int32_t msm_flash_high(
 	struct msm_flash_ctrl_t *flash_ctrl,
@@ -550,7 +588,13 @@ static int32_t msm_flash_high(
 				max_current) {
 				curr = flash_data->flash_current[i];
 			} else {
+/* SHLOCAL_CAMERA_IMAGE_QUALITY-> */
+#ifdef SHCAM_PICT
+				curr = SHCAM_LED_FLASH_CURRENT;
+#else
 				curr = flash_ctrl->flash_op_current[i];
+#endif
+/* SHLOCAL_CAMERA_IMAGE_QUALITY<- */
 				pr_debug("LED flash_current[%d] clamped %d\n",
 					i, curr);
 			}
@@ -619,6 +663,12 @@ static int32_t msm_flash_config(struct msm_flash_ctrl_t *flash_ctrl,
 			rc = flash_ctrl->func_tbl->camera_flash_high(
 				flash_ctrl, flash_data);
 		break;
+/* SHLOCAL_CAMERA_IMAGE_QUALITY-> *//* flash customize */
+	case CFG_FLASH_PREFLASH:
+		if (flash_ctrl->flash_state == MSM_CAMERA_FLASH_INIT)
+			rc = msm_flash_preflash(flash_ctrl, flash_data);
+		break;
+/* SHLOCAL_CAMERA_IMAGE_QUALITY<- */
 	default:
 		rc = -EFAULT;
 		break;
@@ -1027,6 +1077,9 @@ static long msm_flash_subdev_do_ioctl(
 		case CFG_FLASH_OFF:
 		case CFG_FLASH_LOW:
 		case CFG_FLASH_HIGH:
+/* SHLOCAL_CAMERA_IMAGE_QUALITY-> *//* flash customize */
+		case CFG_FLASH_PREFLASH:
+/* SHLOCAL_CAMERA_IMAGE_QUALITY<- */
 			flash_data.cfg.settings = compat_ptr(u32->cfg.settings);
 			break;
 		case CFG_FLASH_INIT:
@@ -1137,7 +1190,7 @@ static int32_t msm_flash_platform_probe(struct platform_device *pdev)
 
 	CDBG("%s:%d flash sd name = %s", __func__, __LINE__,
 		flash_ctrl->msm_sd.sd.entity.name);
-	msm_flash_v4l2_subdev_fops = v4l2_subdev_fops;
+	msm_cam_copy_v4l2_subdev_fops(&msm_flash_v4l2_subdev_fops);
 #ifdef CONFIG_COMPAT
 	msm_flash_v4l2_subdev_fops.compat_ioctl32 =
 		msm_flash_subdev_fops_ioctl;

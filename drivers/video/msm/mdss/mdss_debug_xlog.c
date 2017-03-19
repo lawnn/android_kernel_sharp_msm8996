@@ -21,6 +21,9 @@
 #include "mdss.h"
 #include "mdss_mdp.h"
 #include "mdss_debug.h"
+#ifdef CONFIG_SHDISP /* CUST_ID_00030 */
+#include "mdss_shdisp.h"
+#endif /* CONFIG_SHDISP */
 
 #ifdef CONFIG_FB_MSM_MDSS_XLOG_DEBUG
 #define XLOG_DEFAULT_ENABLE 1
@@ -85,6 +88,14 @@ struct mdss_dbg_xlog {
 
 static inline bool mdss_xlog_is_enabled(u32 flag)
 {
+#ifdef CONFIG_SHDISP /* CUST_ID_00030 */
+	if (!mdss_shdisp_get_bdic_is_exist()) {
+		return false;
+	}
+	if (!mdss_shdisp_get_upper_unit_is_connected()) {
+		return false;
+	}
+#endif /* CONFIG_SHDISP */
 	return (flag & mdss_dbg_xlog.xlog_enable) ||
 		(flag == MDSS_XLOG_ALL && mdss_dbg_xlog.xlog_enable);
 }
@@ -396,7 +407,8 @@ static void mdss_dump_vbif_debug_bus(u32 bus_dump_flag,
 		wmb();
 
 		__vbif_debug_bus(head, vbif_base, dump_addr, in_log);
-		dump_addr += (head->block_cnt * head->test_pnt_cnt * 4);
+		if (dump_addr)
+			dump_addr += (head->block_cnt * head->test_pnt_cnt * 4);
 	}
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);

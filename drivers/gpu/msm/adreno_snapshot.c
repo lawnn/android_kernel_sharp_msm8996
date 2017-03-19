@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -231,17 +231,30 @@ static inline void parse_ib(struct kgsl_device *device,
 
 }
 
+static inline bool iommu_is_setstate_addr(struct kgsl_device *device,
+		uint64_t gpuaddr, uint64_t size)
+{
+	struct kgsl_iommu *iommu = device->mmu.priv;
+
+	if (kgsl_mmu_get_mmutype() != KGSL_MMU_TYPE_IOMMU ||
+		iommu == NULL)
+		return false;
+
+	return kgsl_gpuaddr_in_memdesc(&iommu->setstate, gpuaddr,
+			size);
+}
+
 /**
  * snapshot_rb_ibs() - Dump rb data and capture the IB's in the RB as well
+ * @device: Pointer to a KGSL device
  * @rb: The RB to dump
  * @data: Pointer to memory where the RB data is to be dumped
  * @snapshot: Pointer to information about the current snapshot being taken
  */
-static void snapshot_rb_ibs(struct adreno_ringbuffer *rb,
-			unsigned int *data,
-			struct kgsl_snapshot *snapshot)
+static void snapshot_rb_ibs(struct kgsl_device *device,
+		struct adreno_ringbuffer *rb, unsigned int *data,
+		struct kgsl_snapshot *snapshot)
 {
-	struct kgsl_device *device = rb->device;
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	unsigned int rptr, *rbptr;
 	uint64_t ibbase;
@@ -352,14 +365,16 @@ static void snapshot_rb_ibs(struct adreno_ringbuffer *rb,
 				ibsize = rbptr[index + 3];
 			}
 
-			/*
-			 * Sometimes the kernel generates IBs in global
-			 * memory. We dump the interesting global buffers,
-			 * so there's no need to parse these IBs.
-			 */
-			if (!kgsl_search_global_pt_entries(ibaddr, ibsize))
-				parse_ib(device, snapshot, snapshot->process,
-					ibaddr, ibsize);
+			/* Don't parse known global IBs */
+			if (iommu_is_setstate_addr(device, ibaddr, ibsize))
+				continue;
+
+			if (kgsl_gpuaddr_in_memdesc(&adreno_dev->pwron_fixup,
+				ibaddr, ibsize))
+				continue;
+
+			parse_ib(device, snapshot, snapshot->process,
+				ibaddr, ibsize);
 		}
 
 		index = index + 1;
@@ -400,22 +415,18 @@ static size_t snapshot_rb(struct kgsl_device *device, u8 *buf,
 	header->rptr = rb->rptr;
 	header->rbsize = KGSL_RB_DWORDS;
 	header->count = KGSL_RB_DWORDS;
-	adreno_rb_readtimestamp(device, rb, KGSL_TIMESTAMP_QUEUED,
+	adreno_rb_readtimestamp(adreno_dev, rb, KGSL_TIMESTAMP_QUEUED,
 					&header->timestamp_queued);
-	adreno_rb_readtimestamp(device, rb, KGSL_TIMESTAMP_RETIRED,
+	adreno_rb_readtimestamp(adreno_dev, rb, KGSL_TIMESTAMP_RETIRED,
 					&header->timestamp_retired);
 	header->gpuaddr = rb->buffer_desc.gpuaddr;
 	header->id = rb->id;
 
 	if (rb == adreno_dev->cur_rb) {
-		snapshot_rb_ibs(rb, data, snapshot);
+		snapshot_rb_ibs(device, rb, data, snapshot);
 	} else {
-		unsigned int *rbptr = rb->buffer_desc.hostptr;
-		/* just copy the RB data, no need to look for IB's */
-		memcpy(data, (void *)(rbptr + rb->wptr),
-			(KGSL_RB_DWORDS - rb->wptr) * sizeof(unsigned int));
-		memcpy((void *)(data + (KGSL_RB_DWORDS - rb->wptr)), rbptr,
-			rb->wptr * sizeof(unsigned int));
+		/* Just copy the ringbuffer, there are no active IBs */
+		memcpy(data, rb->buffer_desc.hostptr, KGSL_RB_SIZE);
 	}
 	/* Return the size of the section */
 	return KGSL_RB_SIZE + sizeof(*header);
@@ -438,10 +449,11 @@ static int _save_mem_entries(int id, void *ptr, void *data)
 {
 	struct kgsl_mem_entry *entry = ptr;
 	struct mem_entry *m = (struct mem_entry *) data;
+	unsigned int index = id - 1;
 
-	m->gpuaddr = entry->memdesc.gpuaddr;
-	m->size = entry->memdesc.size;
-	m->type = kgsl_memdesc_get_memtype(&entry->memdesc);
+	m[index].gpuaddr = entry->memdesc.gpuaddr;
+	m[index].size = entry->memdesc.size;
+	m[index].type = kgsl_memdesc_get_memtype(&entry->memdesc);
 
 	return 0;
 }
@@ -723,6 +735,26 @@ static size_t snapshot_preemption_record(struct kgsl_device *device, u8 *buf,
 	return size + sizeof(*header);
 }
 
+/* Snapshot IOMMU specific buffers */
+static void adreno_snapshot_iommu(struct kgsl_device *device,
+		struct kgsl_snapshot *snapshot)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct kgsl_mmu *mmu = &device->mmu;
+	struct kgsl_iommu *iommu = mmu->priv;
+
+	if (iommu == NULL)
+		return;
+
+	kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_GPU_OBJECT_V2,
+		snapshot, snapshot_global, &iommu->setstate);
+
+	if (ADRENO_FEATURE(adreno_dev, ADRENO_PREEMPTION))
+		kgsl_snapshot_add_section(device,
+			KGSL_SNAPSHOT_SECTION_GPU_OBJECT_V2,
+			snapshot, snapshot_global, &iommu->smmu_info);
+}
+
 /* adreno_snapshot - Snapshot the Adreno GPU state
  * @device - KGSL device to snapshot
  * @snapshot - Pointer to the snapshot instance
@@ -741,7 +773,6 @@ void adreno_snapshot(struct kgsl_device *device, struct kgsl_snapshot *snapshot,
 	struct adreno_gpudev *gpudev = ADRENO_GPU_DEVICE(adreno_dev);
 	struct adreno_ringbuffer *rb;
 	struct snapshot_rb_params snap_rb_params;
-	struct kgsl_iommu *iommu = device->mmu.priv;
 
 	ib_max_objs = 0;
 	/* Reset the list of objects */
@@ -785,15 +816,14 @@ void adreno_snapshot(struct kgsl_device *device, struct kgsl_snapshot *snapshot,
 
 	/* Dump selected global buffers */
 	kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_GPU_OBJECT_V2,
-			snapshot, snapshot_global, &adreno_dev->dev.memstore);
-
-	kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_GPU_OBJECT_V2,
-			snapshot, snapshot_global,
-			&adreno_dev->dev.mmu.setstate_memory);
+			snapshot, snapshot_global, &device->memstore);
 
 	kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_GPU_OBJECT_V2,
 			snapshot, snapshot_global,
 			&adreno_dev->pwron_fixup);
+
+	if (kgsl_mmu_get_mmutype() == KGSL_MMU_TYPE_IOMMU)
+		adreno_snapshot_iommu(device, snapshot);
 
 	if (ADRENO_FEATURE(adreno_dev, ADRENO_PREEMPTION)) {
 		FOR_EACH_RINGBUFFER(adreno_dev, rb, i) {
@@ -802,10 +832,6 @@ void adreno_snapshot(struct kgsl_device *device, struct kgsl_snapshot *snapshot,
 				snapshot, snapshot_preemption_record,
 				&rb->preemption_desc);
 		}
-
-		kgsl_snapshot_add_section(device,
-				KGSL_SNAPSHOT_SECTION_GPU_OBJECT_V2,
-				snapshot, snapshot_global, &iommu->smmu_info);
 	}
 
 	/*
@@ -1073,4 +1099,59 @@ size_t adreno_snapshot_cp_meq(struct kgsl_device *device, u8 *buf,
 		adreno_readreg(adreno_dev, ADRENO_REG_CP_MEQ_DATA, &data[i]);
 
 	return DEBUG_SECTION_SZ(cp_meq_sz);
+}
+
+static const struct adreno_vbif_snapshot_registers *vbif_registers(
+		struct adreno_device *adreno_dev,
+		const struct adreno_vbif_snapshot_registers *list,
+		unsigned int count)
+{
+	unsigned int version;
+	unsigned int i;
+
+	adreno_readreg(adreno_dev, ADRENO_REG_VBIF_VERSION, &version);
+
+	for (i = 0; i < count; i++) {
+		if (list[i].version == version)
+			return &list[i];
+	}
+
+	KGSL_CORE_ERR(
+		"snapshot: Registers for VBIF version %X register were not dumped\n",
+		version);
+
+	return NULL;
+}
+
+void adreno_snapshot_registers(struct kgsl_device *device,
+		struct kgsl_snapshot *snapshot,
+		const unsigned int *regs, unsigned int count)
+{
+	struct kgsl_snapshot_registers r;
+
+	r.regs = regs;
+	r.count = count;
+
+	kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_REGS, snapshot,
+		kgsl_snapshot_dump_registers, &r);
+}
+
+void adreno_snapshot_vbif_registers(struct kgsl_device *device,
+		struct kgsl_snapshot *snapshot,
+		const struct adreno_vbif_snapshot_registers *list,
+		unsigned int count)
+{
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	struct kgsl_snapshot_registers regs;
+	const struct adreno_vbif_snapshot_registers *vbif;
+
+	vbif = vbif_registers(adreno_dev, list, count);
+
+	if (vbif != NULL) {
+		regs.regs = vbif->registers;
+		regs.count = vbif->count;
+
+		kgsl_snapshot_add_section(device, KGSL_SNAPSHOT_SECTION_REGS,
+			snapshot, kgsl_snapshot_dump_registers, &regs);
+	}
 }

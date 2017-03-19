@@ -117,10 +117,18 @@
 		} \
 	} while (0)
 
+#ifdef CONFIG_SHSYS_CUST
+#define BOOT_LIMIT_FREQ_GOLD 1555200
+static DEFINE_PER_CPU(unsigned int, limitlock_freq) = UINT_MAX;
+#endif /* CONFIG_SHSYS_CUST */
+
 static struct msm_thermal_data msm_thermal_info;
 static struct delayed_work check_temp_work, retry_hotplug_work;
 static bool core_control_enabled;
 static uint32_t cpus_offlined;
+#ifdef CONFIG_SHSYS_CUST
+static uint32_t big_online;
+#endif /* CONFIG_SHSYS_CUST */
 static cpumask_var_t cpus_previously_online;
 static DEFINE_MUTEX(core_control_mutex);
 static struct kobject *cc_kobj;
@@ -187,7 +195,7 @@ static struct kobj_attribute mx_enabled_attr;
 static struct attribute_group cx_attr_gp;
 static struct attribute_group gfx_attr_gp;
 static struct attribute_group mx_attr_group;
-static struct regulator *vdd_mx;
+static struct regulator *vdd_mx, *vdd_cx;
 static long *tsens_temp_at_panic;
 static u32 tsens_temp_print;
 static uint32_t bucket;
@@ -444,6 +452,39 @@ static ssize_t thermal_config_debugfs_write(struct file *file,
 			sensor_mgr_disable_threshold( \
 				&thresh[_id]); \
 		_flag = 0; \
+	} while (0)
+
+#define APPLY_VDD_RESTRICTION(vdd, level, name, ret)                   \
+	do {                                                              \
+		ret = regulator_set_voltage(vdd, level, INT_MAX);         \
+		if (ret) {                                                \
+			pr_err("Failed to vote %s to level %d, err %d\n", \
+			 #name, level, ret);                              \
+		} else {                                                  \
+			ret = regulator_enable(vdd);                      \
+			if (ret)                                          \
+				pr_err("Failed to enable %s, err %d\n",   \
+					#name, ret);                      \
+			else                                              \
+				pr_debug("Vote %s with level %d\n",       \
+					#name, level);                    \
+		}                                                         \
+	} while (0)
+
+#define REMOVE_VDD_RESTRICTION(vdd, name, ret)                             \
+	do {                                                                  \
+		ret = regulator_disable(vdd);                                 \
+		if (ret) {                                                    \
+			pr_err("Failed to disable %s, error %d\n",            \
+				#name, ret);                                  \
+		} else {                                                      \
+			ret = regulator_set_voltage(vdd, 0, INT_MAX);      \
+			if (ret)                                              \
+				pr_err("Failed to remove %s vote, error %d\n",\
+					#name, ret);                          \
+			else                                                  \
+				pr_debug("Remove voting to %s\n", #name);     \
+		}                                                             \
 	} while (0)
 
 static void uio_init(struct platform_device *pdev)
@@ -937,6 +978,9 @@ static int  msm_thermal_cpufreq_callback(struct notifier_block *nfb,
 			max_freq_req = cpus[policy->cpu].limited_max_freq;
 			min_freq_req = cpus[policy->cpu].limited_min_freq;
 		}
+#ifdef CONFIG_SHSYS_CUST
+		max_freq_req = min(max_freq_req, per_cpu(limitlock_freq, policy->cpu));
+#endif /* CONFIG_SHSYS_CUST */
 		pr_debug("mitigating CPU%d to freq max: %u min: %u\n",
 		policy->cpu, max_freq_req, min_freq_req);
 
@@ -2514,7 +2558,11 @@ int sensor_mgr_set_threshold(uint32_t zone_id,
 	while (i < MAX_THRESHOLD) {
 		switch (threshold[i].trip) {
 		case THERMAL_TRIP_CONFIGURABLE_HI:
+#ifdef CONFIG_SHSYS_CUST
+			if (threshold[i].temp / tsens_scaling_factor > temp) {
+#else
 			if (threshold[i].temp / tsens_scaling_factor >= temp) {
+#endif /* CONFIG_SHSYS_CUST */
 				ret = set_and_activate_threshold(zone_id,
 					&threshold[i]);
 				if (ret)
@@ -2524,7 +2572,11 @@ int sensor_mgr_set_threshold(uint32_t zone_id,
 			}
 			break;
 		case THERMAL_TRIP_CONFIGURABLE_LOW:
+#ifdef CONFIG_SHSYS_CUST
+			if (threshold[i].temp / tsens_scaling_factor < temp) {
+#else
 			if (threshold[i].temp / tsens_scaling_factor <= temp) {
+#endif /* CONFIG_SHSYS_CUST */
 				ret = set_and_activate_threshold(zone_id,
 					&threshold[i]);
 				if (ret)
@@ -2546,50 +2598,37 @@ set_threshold_exit:
 
 static int apply_vdd_mx_restriction(void)
 {
-	int ret = 0;
+	int ret_mx = 0, ret_cx = 0;
 
 	if (mx_restr_applied)
 		goto done;
 
-	ret = regulator_set_voltage(vdd_mx, msm_thermal_info.vdd_mx_min,
-			INT_MAX);
-	if (ret) {
-		pr_err("Failed to add mx vote, error %d\n", ret);
-		goto done;
-	}
-
-	ret = regulator_enable(vdd_mx);
-	if (ret)
-		pr_err("Failed to vote for mx voltage %d, error %d\n",
-				msm_thermal_info.vdd_mx_min, ret);
-	else
+	APPLY_VDD_RESTRICTION(vdd_mx, msm_thermal_info.vdd_mx_min, mx, ret_mx);
+	if (vdd_cx)
+		APPLY_VDD_RESTRICTION(vdd_cx, msm_thermal_info.vdd_cx_min,
+			cx, ret_cx);
+	if (!ret_mx && !ret_cx)
 		mx_restr_applied = true;
 
 done:
-	return ret;
+	return (ret_mx | ret_cx);
 }
 
 static int remove_vdd_mx_restriction(void)
 {
-	int ret = 0;
+	int ret_mx = 0, ret_cx = 0;
 
 	if (!mx_restr_applied)
 		goto done;
 
-	ret = regulator_disable(vdd_mx);
-	if (ret) {
-		pr_err("Failed to disable mx voting, error %d\n", ret);
-		goto done;
-	}
-
-	ret = regulator_set_voltage(vdd_mx, 0, INT_MAX);
-	if (ret)
-		pr_err("Failed to remove mx vote, error %d\n", ret);
-	else
+	REMOVE_VDD_RESTRICTION(vdd_mx, mx, ret_mx);
+	if (vdd_cx)
+		REMOVE_VDD_RESTRICTION(vdd_cx, cx, ret_cx);
+	if (!ret_mx && !ret_cx)
 		mx_restr_applied = false;
 
 done:
-	return ret;
+	return (ret_mx | ret_cx);
 }
 
 static int do_vdd_mx(void)
@@ -3411,7 +3450,8 @@ static int __ref msm_thermal_cpu_callback(struct notifier_block *nfb,
 {
 	uint32_t cpu = (uintptr_t)hcpu;
 
-	if (action == CPU_UP_PREPARE || action == CPU_UP_PREPARE_FROZEN) {
+	switch (action & ~CPU_TASKS_FROZEN) {
+	case CPU_UP_PREPARE:
 		if (!cpumask_test_and_set_cpu(cpu, cpus_previously_online))
 			pr_debug("Total prev cores online tracked %u\n",
 				cpumask_weight(cpus_previously_online));
@@ -3422,11 +3462,32 @@ static int __ref msm_thermal_cpu_callback(struct notifier_block *nfb,
 				cpu);
 			return NOTIFY_BAD;
 		}
-	} else if (action == CPU_DOWN_PREPARE ||
-				action == CPU_DOWN_PREPARE_FROZEN) {
+		break;
+	case CPU_DOWN_PREPARE:
 		if (!cpumask_test_and_set_cpu(cpu, cpus_previously_online))
 			pr_debug("Total prev cores online tracked %u\n",
 				cpumask_weight(cpus_previously_online));
+		break;
+	case CPU_ONLINE:
+		if (core_control_enabled &&
+			(msm_thermal_info.core_control_mask & BIT(cpu)) &&
+			(cpus_offlined & BIT(cpu))) {
+			if (hotplug_task) {
+				pr_debug("Re-evaluate and hotplug CPU%d\n",
+					cpu);
+				complete(&hotplug_notify_complete);
+			} else {
+				/*
+				 * This will be auto-corrected next time
+				 * do_core_control() is called
+				 */
+				pr_err("CPU%d online, after thermal veto\n",
+					cpu);
+			}
+		}
+		break;
+	default:
+		break;
 	}
 
 	pr_debug("voting for CPU%d to be online\n", cpu);
@@ -3691,6 +3752,13 @@ static void freq_mitigation_init(void)
 		goto init_freq_thread;
 
 	for_each_possible_cpu(cpu) {
+		/*
+		 * Hotplug may not be enabled,
+		 * make sure core sensor id is initialized.
+		 */
+		cpus[cpu].sensor_id =
+			sensor_get_id((char *)cpus[cpu].sensor_type);
+		cpus[cpu].id_type = THERM_ZONE_ID;
 		if (!(msm_thermal_info.freq_mitig_control_mask & BIT(cpu)))
 			continue;
 		hi_thresh = &cpus[cpu].threshold[FREQ_THRESHOLD_HIGH];
@@ -4229,6 +4297,7 @@ static __ref int do_thermal_monitor(void *data)
 	return ret;
 }
 
+#ifndef CONFIG_SHSYS_CUST
 static int vdd_rstr_apss_freq_dev_init(void)
 {
 	int idx = 0, ret = 0;
@@ -4275,6 +4344,7 @@ freq_init_exit:
 	}
 	return ret;
 }
+#endif /* CONFIG_SHSYS_CUST */
 
 static int convert_to_zone_id(struct threshold_info *thresh_inp)
 {
@@ -4349,14 +4419,14 @@ static void thermal_monitor_init(void)
 	if ((cx_phase_ctrl_enabled) &&
 		!(convert_to_zone_id(&thresh[MSM_CX_PHASE_CTRL_HOT])))
 		therm_set_threshold(&thresh[MSM_CX_PHASE_CTRL_HOT]);
-
+#ifndef CONFIG_SHSYS_CUST
 	if (vdd_rstr_enabled) {
 		if (vdd_rstr_apss_freq_dev_init())
 			pr_err("vdd APSS mitigation device init failed\n");
 		else if (!(convert_to_zone_id(&thresh[MSM_VDD_RESTRICTION])))
 			therm_set_threshold(&thresh[MSM_VDD_RESTRICTION]);
 	}
-
+#endif /* CONFIG_SHSYS_CUST */
 	if ((gfx_warm_phase_ctrl_enabled) &&
 		!(convert_to_zone_id(&thresh[MSM_GFX_PHASE_CTRL_WARM]))) {
 		therm_set_threshold(&thresh[MSM_GFX_PHASE_CTRL_WARM]);
@@ -4645,10 +4715,26 @@ static void interrupt_mode_init(void)
 static int __ref set_enabled(const char *val, const struct kernel_param *kp)
 {
 	int ret = 0;
+#ifdef CONFIG_SHSYS_CUST
+	int cpu;
+#endif /* CONFIG_SHSYS_CUST */
 
 	ret = param_set_bool(val, kp);
+#ifdef CONFIG_SHSYS_CUST
+	if (!enabled) {
+		interrupt_mode_init();
+		complete(&freq_mitigation_complete);
+		for_each_possible_cpu(cpu) {
+			if (cpu >= 2) {
+				per_cpu(limitlock_freq, cpu) = UINT_MAX;
+			}
+		}
+		sh_cpufreq_update_policy_try();
+	}
+#else
 	if (!enabled)
 		interrupt_mode_init();
+#endif /* CONFIG_SHSYS_CUST */
 	else
 		pr_info("no action for enabled = %d\n",
 			enabled);
@@ -4771,17 +4857,54 @@ done_cc:
 	return count;
 }
 
+#ifdef CONFIG_SHSYS_CUST
+static ssize_t show_big_online(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", big_online);
+}
+
+static ssize_t __ref store_big_online(struct kobject *kobj,
+		struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	int ret = 0;
+
+	ret = kstrtouint(buf, 10, &big_online);
+	sysfs_notify(kobj, NULL, "big_online");
+	return big_online;
+}
+#endif /* CONFIG_SHSYS_CUST */
+
 static __refdata struct kobj_attribute cc_enabled_attr =
 __ATTR(enabled, 0644, show_cc_enabled, store_cc_enabled);
 
 static __refdata struct kobj_attribute cpus_offlined_attr =
 __ATTR(cpus_offlined, 0644, show_cpus_offlined, store_cpus_offlined);
 
+#ifdef CONFIG_SHSYS_CUST
+static __refdata struct kobj_attribute big_online_attr =
+__ATTR(big_online, 0640, show_big_online, store_big_online);
+#endif /* CONFIG_SHSYS_CUST */
+
 static __refdata struct attribute *cc_attrs[] = {
 	&cc_enabled_attr.attr,
 	&cpus_offlined_attr.attr,
+#ifdef CONFIG_SHSYS_CUST
+	&big_online_attr.attr,
+#endif /* CONFIG_SHSYS_CUST */
 	NULL,
 };
+
+#ifdef CONFIG_SHSYS_CUST
+void notify_big_online(unsigned int sched_boost)
+{
+	char buf[10];
+
+	snprintf(buf, sizeof(buf), "%u%c", sched_boost, '\0');
+	pr_debug("notify_big_online: sched_boost %u buf %s\n", sched_boost, buf);
+	store_big_online(cc_kobj, &big_online_attr, buf, sizeof(buf));
+}
+#endif /* CONFIG_SHSYS_CUST */
 
 static __refdata struct attribute_group cc_attr_group = {
 	.attrs = cc_attrs,
@@ -5054,6 +5177,7 @@ static void msm_thermal_init_cpu_mit(enum cpu_mit_type cpu_mit)
 			cpus[cpu].user_max_freq = UINT_MAX;
 			cpus[cpu].shutdown_max_freq = UINT_MAX;
 			cpus[cpu].suspend_max_freq = UINT_MAX;
+			cpus[cpu].vdd_max_freq = UINT_MAX;
 			cpus[cpu].user_min_freq = 0;
 			cpus[cpu].limited_max_freq = UINT_MAX;
 			cpus[cpu].limited_min_freq = 0;
@@ -5065,6 +5189,9 @@ static void msm_thermal_init_cpu_mit(enum cpu_mit_type cpu_mit)
 int msm_thermal_init(struct msm_thermal_data *pdata)
 {
 	int ret = 0;
+#ifdef CONFIG_SHSYS_CUST
+	int cpu;
+#endif /* CONFIG_SHSYS_CUST */
 
 	ret = devmgr_devices_init(pdata->pdev);
 	if (ret)
@@ -5086,6 +5213,14 @@ int msm_thermal_init(struct msm_thermal_data *pdata)
 			CPUFREQ_POLICY_NOTIFIER);
 	if (ret)
 		pr_err("cannot register cpufreq notifier. err:%d\n", ret);
+
+#ifdef CONFIG_SHSYS_CUST
+	for_each_possible_cpu(cpu) {
+		if (cpu >= 2) {
+			per_cpu(limitlock_freq, cpu) = BOOT_LIMIT_FREQ_GOLD;
+		}
+	}
+#endif /* CONFIG_SHSYS_CUST */
 
 	register_reboot_notifier(&msm_thermal_reboot_notifier);
 	pm_notifier(msm_thermal_suspend_callback, 0);
@@ -5736,6 +5871,21 @@ static int probe_vdd_mx(struct device_node *node,
 			"Could not get regulator: vdd-mx, err:%d\n", ret);
 		}
 		goto read_node_done;
+	}
+
+	key = "qcom,cx-retention-min";
+	ret = of_property_read_u32(node, key, &data->vdd_cx_min);
+	if (!ret) {
+		vdd_cx = devm_regulator_get(&pdev->dev, "vdd-cx");
+		if (IS_ERR_OR_NULL(vdd_cx)) {
+			ret = PTR_ERR(vdd_cx);
+			if (ret != -EPROBE_DEFER) {
+				pr_err(
+				"Could not get regulator: vdd-cx, err:%d\n",
+				ret);
+			}
+			goto read_node_done;
+		}
 	}
 
 	ret = sensor_mgr_init_threshold(&thresh[MSM_VDD_MX_RESTRICTION],
@@ -6673,8 +6823,11 @@ static void thermal_mx_config_read(struct seq_file *m, void *data)
 		seq_printf(m, "threshold clear:%d degC\n",
 				msm_thermal_info.vdd_mx_temp_degC
 				+ msm_thermal_info.vdd_mx_temp_hyst_degC);
-		seq_printf(m, "retention value:%d\n",
+		seq_printf(m, "mx retention value:%d\n",
 				msm_thermal_info.vdd_mx_min);
+		if (vdd_cx)
+			seq_printf(m, "cx retention value:%d\n",
+				msm_thermal_info.vdd_cx_min);
 	}
 }
 
@@ -7063,6 +7216,7 @@ static int msm_thermal_dev_exit(struct platform_device *inp_dev)
 					r->device_handle[i] = NULL;
 				}
 			}
+			kfree(rails);
 		}
 		if (cx_phase_ctrl_enabled) {
 			sensor_mgr_remove_threshold(

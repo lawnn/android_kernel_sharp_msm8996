@@ -39,12 +39,14 @@
 #include <linux/kthread.h>
 #include <net/netlink.h>
 #include <net/genetlink.h>
+#include <linux/sysfs.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/thermal.h>
 
 #include "thermal_core.h"
 #include "thermal_hwmon.h"
+#include "../base/base.h"
 
 #define THERMAL_UEVENT_DATA "type"
 
@@ -875,6 +877,51 @@ static void handle_thermal_trip(struct thermal_zone_device *tz, int trip)
 	monitor_thermal_zone(tz);
 }
 
+#ifdef CONFIG_BATTERY_SH
+#define TSENS_DEBUG_PORT_MAX (40)
+static int debug_tsens_temp[TSENS_DEBUG_PORT_MAX] = {0,};
+module_param_named(debug_tsens_0_tmp,  debug_tsens_temp[0],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_1_tmp,  debug_tsens_temp[1],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_2_tmp,  debug_tsens_temp[2],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_3_tmp,  debug_tsens_temp[3],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_4_tmp,  debug_tsens_temp[4],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_5_tmp,  debug_tsens_temp[5],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_6_tmp,  debug_tsens_temp[6],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_7_tmp,  debug_tsens_temp[7],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_8_tmp,  debug_tsens_temp[8],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_9_tmp,  debug_tsens_temp[9],  int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_10_tmp, debug_tsens_temp[10], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_11_tmp, debug_tsens_temp[11], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_12_tmp, debug_tsens_temp[12], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_13_tmp, debug_tsens_temp[13], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_14_tmp, debug_tsens_temp[14], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_15_tmp, debug_tsens_temp[15], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_16_tmp, debug_tsens_temp[16], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_17_tmp, debug_tsens_temp[17], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_18_tmp, debug_tsens_temp[18], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_19_tmp, debug_tsens_temp[19], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_20_tmp, debug_tsens_temp[20], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_21_tmp, debug_tsens_temp[21], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_22_tmp, debug_tsens_temp[22], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_23_tmp, debug_tsens_temp[23], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_24_tmp, debug_tsens_temp[24], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_25_tmp, debug_tsens_temp[25], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_26_tmp, debug_tsens_temp[26], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_27_tmp, debug_tsens_temp[27], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_28_tmp, debug_tsens_temp[28], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_29_tmp, debug_tsens_temp[29], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_30_tmp, debug_tsens_temp[30], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_31_tmp, debug_tsens_temp[31], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_32_tmp, debug_tsens_temp[32], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_33_tmp, debug_tsens_temp[33], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_34_tmp, debug_tsens_temp[34], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_35_tmp, debug_tsens_temp[35], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_36_tmp, debug_tsens_temp[36], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_37_tmp, debug_tsens_temp[37], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_38_tmp, debug_tsens_temp[38], int, S_IRUSR | S_IWUSR);
+module_param_named(debug_tsens_39_tmp, debug_tsens_temp[39], int, S_IRUSR | S_IWUSR);
+#endif /* CONFIG_BATTERY_SH */
+
 /**
  * thermal_zone_get_temp() - returns its the temperature of thermal zone
  * @tz: a valid pointer to a struct thermal_zone_device
@@ -897,6 +944,18 @@ int thermal_zone_get_temp(struct thermal_zone_device *tz, unsigned long *temp)
 	if (!tz || IS_ERR(tz) || !tz->ops->get_temp)
 		goto exit;
 
+#ifdef CONFIG_BATTERY_SH
+        if ((tz->id >= 0) && (tz->id < TSENS_DEBUG_PORT_MAX))
+        {
+            if (debug_tsens_temp[tz->id])
+            {
+                 *temp = debug_tsens_temp[tz->id];
+                 pr_debug("debug thermal zone:%d temp = %ld\n", tz->id, *temp);
+                 ret = 0;
+                 return ret;
+            }
+        }
+#endif /* CONFIG_BATTERY_SH */
 	mutex_lock(&tz->lock);
 
 	ret = tz->ops->get_temp(tz, temp);
@@ -2172,6 +2231,17 @@ static void remove_trip_attrs(struct thermal_zone_device *tz)
  * in case of error, an ERR_PTR. Caller must check return value with
  * IS_ERR*() helpers.
  */
+#ifdef CONFIG_BATTERY_SH
+#define MSM_THERM_NAME         "msm_therm"
+#define LCD_THERM_NAME         "lcd_therm"
+#define PA0_THERM_NAME         "pa_therm0"
+#define CAM_THERM_NAME         "cam_therm"
+#define XO_THERM_NAME          "xo_therm"
+#define PMIC_THERM_NAME        "pm8994_tz"
+#define PMIC_THERM_TYPE        "pmic_therm"
+#define BATT_THERM_NAME        "battery"
+#endif /* CONFIG_BATTERY_SH */
+
 struct thermal_zone_device *thermal_zone_device_register(const char *type,
 	int trips, int mask, void *devdata,
 	struct thermal_zone_device_ops *ops,
@@ -2304,6 +2374,20 @@ struct thermal_zone_device *thermal_zone_device_register(const char *type,
 
 	/* Bind cooling devices for this zone */
 	bind_tz(tz);
+#ifdef CONFIG_BATTERY_SH
+	if (!strcmp(tz->type, MSM_THERM_NAME) || !strcmp(tz->type, LCD_THERM_NAME) ||
+	    !strcmp(tz->type, PA0_THERM_NAME) || !strcmp(tz->type, CAM_THERM_NAME) ||
+	    !strcmp(tz->type, XO_THERM_NAME)  || !strcmp(tz->type, BATT_THERM_NAME)) {
+		if (sysfs_create_link(&(tz->device.class)->p->subsys.kobj, &tz->device.kobj, tz->type)) {
+			pr_debug("fail to create link sys file:%s\n", tz->type);
+		}
+	}
+	else if (!strcmp(tz->type, PMIC_THERM_NAME)) {
+		if (sysfs_create_link(&(tz->device.class)->p->subsys.kobj, &tz->device.kobj, PMIC_THERM_TYPE)) {
+			pr_debug("fail to create link sys file:%s\n", PMIC_THERM_TYPE);
+		}
+	}
+#endif
 
 	INIT_DELAYED_WORK(&(tz->poll_queue), thermal_zone_device_check);
 

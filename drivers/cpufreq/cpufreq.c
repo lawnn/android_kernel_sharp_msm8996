@@ -30,6 +30,16 @@
 #include <linux/tick.h>
 #include <trace/events/power.h>
 
+#ifdef CONFIG_SHSYS_CUST_DEBUG
+enum {
+	SH_DEBUG_CLK_FIX = 1U << 0,
+};
+static int sh_debug_mask = 0;
+module_param_named(
+	sh_debug_mask, sh_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
+);
+#endif /* CONFIG_SHSYS_CUST_DEBUG */
+
 /**
  * The "cpufreq driver" - the arch- or hardware-dependent low
  * level driver of CPUFreq support, and its spinlock. This lock
@@ -100,6 +110,15 @@ static int __init init_cpufreq_govinfo_notifier_list(void)
 	return 0;
 }
 pure_initcall(init_cpufreq_govinfo_notifier_list);
+
+#ifdef CONFIG_SHSYS_CUST
+static RAW_NOTIFIER_HEAD(sh_cpufreq_adjust_notifier_list);
+void sh_cpufreq_notify_adjust(struct sh_cpufreq_adjust_param *sh_cpufreq_adjust, unsigned int state)
+{
+	raw_notifier_call_chain(&sh_cpufreq_adjust_notifier_list, state, sh_cpufreq_adjust);
+}
+EXPORT_SYMBOL_GPL(sh_cpufreq_notify_adjust);
+#endif /* CONFIG_SHSYS_CUST */
 
 static int off __read_mostly;
 static int cpufreq_disabled(void)
@@ -967,6 +986,18 @@ static void cpufreq_init_policy(struct cpufreq_policy *policy)
 	struct cpufreq_policy new_policy;
 	int ret = 0;
 
+	/* Restore policy->min/max for hotplug */
+	if (per_cpu(cpufreq_policy_save, policy->cpu).min) {
+		policy->min = per_cpu(cpufreq_policy_save, policy->cpu).min;
+		policy->user_policy.min = policy->min;
+	}
+	if (per_cpu(cpufreq_policy_save, policy->cpu).max) {
+		policy->max = per_cpu(cpufreq_policy_save, policy->cpu).max;
+		policy->user_policy.max = policy->max;
+	}
+	pr_debug("Restoring CPU%d user policy min %d and max %d\n",
+		 policy->cpu, policy->min, policy->max);
+
 	memcpy(&new_policy, policy, sizeof(*policy));
 
 	/* Update governor of new_policy to the governor used before hotplug */
@@ -978,17 +1009,6 @@ static void cpufreq_init_policy(struct cpufreq_policy *policy)
 		gov = CPUFREQ_DEFAULT_GOVERNOR;
 
 	new_policy.governor = gov;
-
-	if (per_cpu(cpufreq_policy_save, policy->cpu).min) {
-		policy->min = per_cpu(cpufreq_policy_save, policy->cpu).min;
-		policy->user_policy.min = policy->min;
-	}
-	if (per_cpu(cpufreq_policy_save, policy->cpu).max) {
-		policy->max = per_cpu(cpufreq_policy_save, policy->cpu).max;
-		policy->user_policy.max = policy->max;
-	}
-	pr_debug("Restoring CPU%d user policy min %d and max %d\n",
-		 policy->cpu, policy->min, policy->max);
 
 	/* Use the default policy if its valid. */
 	if (cpufreq_driver->setpolicy)
@@ -1857,6 +1877,12 @@ int cpufreq_register_notifier(struct notifier_block *nb, unsigned int list)
 		ret = atomic_notifier_chain_register(
 				&cpufreq_govinfo_notifier_list, nb);
 		break;
+#ifdef CONFIG_SHSYS_CUST
+	case SH_CPUFREQ_ADJUST_NOTIFIER:
+		ret = raw_notifier_chain_register(
+				&sh_cpufreq_adjust_notifier_list, nb);
+		break;
+#endif /* CONFIG_SHSYS_CUST */
 	default:
 		ret = -EINVAL;
 	}
@@ -1895,6 +1921,12 @@ int cpufreq_unregister_notifier(struct notifier_block *nb, unsigned int list)
 		ret = atomic_notifier_chain_unregister(
 				&cpufreq_govinfo_notifier_list, nb);
 		break;
+#ifdef CONFIG_SHSYS_CUST
+	case SH_CPUFREQ_ADJUST_NOTIFIER:
+		ret = raw_notifier_chain_unregister(
+				&sh_cpufreq_adjust_notifier_list, nb);
+		break;
+#endif /* CONFIG_SHSYS_CUST */
 	default:
 		ret = -EINVAL;
 	}
@@ -2227,6 +2259,10 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 {
 	struct cpufreq_governor *old_gov;
 	int ret;
+#ifdef CONFIG_SHSYS_CUST_DEBUG
+	unsigned int prev_policy_min = new_policy->min;
+	unsigned int prev_policy_max = new_policy->max;
+#endif /* CONFIG_SHSYS_CUST_DEBUG */
 
 	pr_debug("setting new policy for CPU %u: %u - %u kHz\n",
 		 new_policy->cpu, new_policy->min, new_policy->max);
@@ -2245,6 +2281,11 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	/* adjust if necessary - hardware incompatibility*/
 	blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
 			CPUFREQ_INCOMPATIBLE, new_policy);
+
+#ifdef CONFIG_SHSYS_CUST_DEBUG
+	if (sh_debug_mask & SH_DEBUG_CLK_FIX)
+		cpufreq_verify_within_limits(new_policy, prev_policy_min, prev_policy_max);
+#endif /* CONFIG_SHSYS_CUST_DEBUG */
 
 	/*
 	 * verify the cpu speed can be set within this limit, which might be
@@ -2310,6 +2351,45 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	pr_debug("governor: change or update limits\n");
 	return __cpufreq_governor(policy, CPUFREQ_GOV_LIMITS);
 }
+
+#ifdef CONFIG_SHSYS_CUST
+static DEFINE_MUTEX(sh_update_try_mutex);
+static struct workqueue_struct *sh_update_try_wq;
+static struct delayed_work sh_update_try_work;
+static unsigned int sh_update_try_cnt = 0;
+#define SH_UPDATE_TRY_PERIOD_MS	10
+#define SH_UPDATE_TRY_CNT		3
+void sh_cpufreq_update_policy_try(void)
+{
+	mutex_lock(&sh_update_try_mutex);
+	sh_update_try_cnt = SH_UPDATE_TRY_CNT;
+	cancel_delayed_work(&sh_update_try_work);
+	queue_delayed_work(sh_update_try_wq, &sh_update_try_work, 0);
+	mutex_unlock(&sh_update_try_mutex);
+}
+EXPORT_SYMBOL(sh_cpufreq_update_policy_try);
+
+static void sh_cpufreq_update_policy_work(struct work_struct *work)
+{
+	int cpu;
+
+	if (!get_online_cpus_try()) {
+		cancel_delayed_work(&sh_update_try_work);
+		for_each_online_cpu(cpu) {
+			cpufreq_update_policy(cpu);
+		}
+		put_online_cpus();
+	} else {
+		mutex_lock(&sh_update_try_mutex);
+		pr_debug("%s: get_online_cpus_try failed. retry_cnt=%u\n", __func__, sh_update_try_cnt);
+		if (sh_update_try_cnt > 0 && !delayed_work_pending(&sh_update_try_work)) {
+			queue_delayed_work(sh_update_try_wq, &sh_update_try_work, msecs_to_jiffies(SH_UPDATE_TRY_PERIOD_MS));
+			sh_update_try_cnt--;
+		}
+		mutex_unlock(&sh_update_try_mutex);
+	}
+}
+#endif /* CONFIG_SHSYS_CUST */
 
 /**
  *	cpufreq_update_policy - re-evaluate an existing cpufreq policy
@@ -2553,6 +2633,12 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data)
 		}
 	}
 
+#ifdef CONFIG_SHSYS_CUST
+	sh_update_try_wq = create_singlethread_workqueue("cpufreq_update_policy_wq");
+	if (!sh_update_try_wq)
+		return -ENOMEM;
+	INIT_DELAYED_WORK(&sh_update_try_work, sh_cpufreq_update_policy_work);
+#endif /* CONFIG_SHSYS_CUST */
 	pr_info("driver %s up and running\n", driver_data->name);
 
 	return 0;
@@ -2592,6 +2678,9 @@ int cpufreq_unregister_driver(struct cpufreq_driver *driver)
 		cpufreq_sysfs_remove_file(&boost.attr);
 
 	unregister_hotcpu_notifier(&cpufreq_cpu_notifier);
+#ifdef CONFIG_SHSYS_CUST
+	destroy_workqueue(sh_update_try_wq);
+#endif /* CONFIG_SHSYS_CUST */
 
 	down_write(&cpufreq_rwsem);
 	write_lock_irqsave(&cpufreq_driver_lock, flags);

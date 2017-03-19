@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
  * Copyright (C) 1994 Martin Schaller
  *
  * 2001 - Documented with DocBook
@@ -445,8 +445,8 @@ static int __compat_async_position_update(struct fb_info *info,
 
 	update_pos.input_layer_cnt = update_pos32.input_layer_cnt;
 	layer_cnt = update_pos32.input_layer_cnt;
-	if ((!layer_cnt) || (layer_cnt > MAX_LAYER_COUNT)) {
-		pr_err("invalid async layers :%d to update\n", layer_cnt);
+	if (!layer_cnt) {
+		pr_err("no async layer to update\n");
 		return -EINVAL;
 	}
 
@@ -3154,6 +3154,13 @@ static int __from_user_pp_params(struct mdp_overlay_pp_params32 *ppp32,
 			sizeof(uint32_t)))
 		return -EFAULT;
 
+#ifdef CONFIG_SHDISP /* CUST_ID_00039 */
+	if (copy_in_user(&ppp->csc_cfg_ops,
+			&ppp32->csc_cfg_ops,
+			sizeof(uint32_t)))
+		return -EFAULT;
+#endif /* CONFIG_SHDISP */
+
 	ret = __from_user_csc_cfg(
 			compat_ptr((uintptr_t)&ppp32->csc_cfg),
 			&ppp->csc_cfg);
@@ -3210,6 +3217,13 @@ static int __to_user_pp_params(struct mdp_overlay_pp_params *ppp,
 			&ppp->config_ops,
 			sizeof(uint32_t)))
 		return -EFAULT;
+
+#ifdef CONFIG_SHDISP /* CUST_ID_00039 */
+	if (copy_in_user(&ppp32->csc_cfg_ops,
+			&ppp->csc_cfg_ops,
+			sizeof(uint32_t)))
+		return -EFAULT;
+#endif /* CONFIG_SHDISP */
 
 	ret = __to_user_csc_cfg(
 			compat_ptr((uintptr_t)&ppp32->csc_cfg),
@@ -4059,10 +4073,35 @@ static u32 __pp_sspp_size(void)
 
 static int __pp_sspp_set_offsets(struct mdp_overlay *ov)
 {
+#ifdef CONFIG_SHDISP /* CUST_ID_00065 */
+	unsigned long data;
+#endif /* CONFIG_SHDISP */
+
 	if (!ov) {
 		pr_err("invalid overlay pointer\n");
 		return -EFAULT;
 	}
+
+#ifdef CONFIG_SHDISP /* CUST_ID_00065 */
+	/* ov has payload buffer. (alloc from user_space) */
+	data = (unsigned long)ov;
+	/* igc_cfg.cfg_payload */
+	data += sizeof(struct mdp_overlay);
+	if (put_user(compat_ptr(data), &ov->overlay_pp_cfg.igc_cfg.cfg_payload))
+		return -EFAULT;
+	/* pa_v2_cfg_data.cfg_payload */
+	data += sizeof(struct mdp_igc_lut_data_v1_7);
+	if (put_user(compat_ptr(data), &ov->overlay_pp_cfg.pa_v2_cfg_data.cfg_payload))
+		return -EFAULT;
+	/* pcc_cfg_data.cfg_payload */
+	data += sizeof(struct mdp_pa_data_v1_7);
+	if (put_user(compat_ptr(data), &ov->overlay_pp_cfg.pcc_cfg_data.cfg_payload))
+		return -EFAULT;
+	/* hist_lut_cfg.cfg_payload */
+	data += sizeof(struct mdp_pcc_data_v1_7);
+	if (put_user(compat_ptr(data), &ov->overlay_pp_cfg.hist_lut_cfg.cfg_payload))
+		return -EFAULT;
+#else  /* CONFIG_SHDISP */
 	ov->overlay_pp_cfg.igc_cfg.cfg_payload = (void *)((unsigned long)ov +
 				sizeof(struct mdp_overlay));
 	ov->overlay_pp_cfg.pa_v2_cfg_data.cfg_payload =
@@ -4074,6 +4113,7 @@ static int __pp_sspp_set_offsets(struct mdp_overlay *ov)
 	ov->overlay_pp_cfg.hist_lut_cfg.cfg_payload =
 		ov->overlay_pp_cfg.pcc_cfg_data.cfg_payload +
 		sizeof(struct mdp_pcc_data_v1_7);
+#endif /* CONFIG_SHDISP */
 	return 0;
 }
 
@@ -4118,12 +4158,24 @@ int mdss_compat_overlay_ioctl(struct fb_info *info, unsigned int cmd,
 			return ret;
 		}
 		ret = __from_user_mdp_overlay(ov, ov32);
+
+#ifdef CONFIG_SHDISP /* CUST_ID_00033 */
+		if (ret) {
+			pr_err("%s: compat mdp overlay failed\n", __func__);
+		} else {
+			ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) ov, file);
+
+			if (!ret)
+				ret = __to_user_mdp_overlay(ov32, ov);
+		}
+#else  /* CONFIG_SHDISP */
 		if (ret)
 			pr_err("%s: compat mdp overlay failed\n", __func__);
 		else
 			ret = mdss_fb_do_ioctl(info, cmd,
 				(unsigned long) ov, file);
 		ret = __to_user_mdp_overlay(ov32, ov);
+#endif /* CONFIG_SHDISP */
 		break;
 	case MSMFB_OVERLAY_SET:
 		alloc_size += sizeof(*ov) + __pp_sspp_size();
@@ -4145,7 +4197,12 @@ int mdss_compat_overlay_ioctl(struct fb_info *info, unsigned int cmd,
 		} else {
 			ret = mdss_fb_do_ioctl(info, cmd,
 				(unsigned long) ov, file);
+#ifdef CONFIG_SHDISP /* CUST_ID_00033 */
+			if (!ret)
+				ret = __to_user_mdp_overlay(ov32, ov);
+#else  /* CONFIG_SHDISP */
 			ret = __to_user_mdp_overlay(ov32, ov);
+#endif /* CONFIG_SHDISP */
 		}
 		break;
 	case MSMFB_OVERLAY_PREPARE:

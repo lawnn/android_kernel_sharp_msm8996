@@ -162,6 +162,14 @@ struct msm_vfe_fetch_engine_cfg {
 	uint32_t buf_stride;
 };
 
+enum msm_vfe_camif_output_format {
+	CAMIF_QCOM_RAW,
+	CAMIF_MIPI_RAW,
+	CAMIF_PLAIN_8,
+	CAMIF_PLAIN_16,
+	CAMIF_MAX_FORMAT,
+};
+
 /*
  * Camif output general configuration
  */
@@ -171,6 +179,11 @@ struct msm_vfe_camif_subsample_cfg {
 	uint32_t sof_counter_step;
 	uint32_t pixel_skip;
 	uint32_t line_skip;
+	uint32_t first_line;
+	uint32_t last_line;
+	uint32_t first_pixel;
+	uint32_t last_pixel;
+	enum msm_vfe_camif_output_format output_format;
 };
 
 /*
@@ -555,7 +568,10 @@ enum msm_isp_event_mask_index {
 	ISP_EVENT_MASK_INDEX_BUF_DIVERT			= 6,
 	ISP_EVENT_MASK_INDEX_COMP_STATS_NOTIFY		= 7,
 	ISP_EVENT_MASK_INDEX_MASK_FE_READ_DONE		= 8,
-	ISP_EVENT_MASK_INDEX_BUF_DONE			= 9
+	ISP_EVENT_MASK_INDEX_BUF_DONE			= 9,
+	ISP_EVENT_MASK_INDEX_REG_UPDATE_MISSING		= 10,
+	ISP_EVENT_MASK_INDEX_PING_PONG_MISMATCH		= 11,
+	ISP_EVENT_MASK_INDEX_BUF_FATAL_ERROR		= 12,
 };
 
 
@@ -590,6 +606,15 @@ enum msm_isp_event_mask_index {
 
 #define ISP_EVENT_SUBS_MASK_BUF_DONE \
 			(1 << ISP_EVENT_MASK_INDEX_BUF_DONE)
+
+#define ISP_EVENT_SUBS_MASK_REG_UPDATE_MISSING \
+			(1 << ISP_EVENT_MASK_INDEX_REG_UPDATE_MISSING)
+
+#define ISP_EVENT_SUBS_MASK_PING_PONG_MISMATCH \
+			(1 << ISP_EVENT_MASK_INDEX_PING_PONG_MISMATCH)
+
+#define ISP_EVENT_SUBS_MASK_BUF_FATAL_ERROR \
+			(1 << ISP_EVENT_MASK_INDEX_BUF_FATAL_ERROR)
 
 enum msm_isp_event_idx {
 	ISP_REG_UPDATE        = 0,
@@ -681,7 +706,7 @@ struct msm_isp_error_info {
 	enum msm_vfe_error_type err_type;
 	uint32_t session_id;
 	uint32_t stream_id;
-	uint8_t stream_id_mask;
+	uint32_t stream_id_mask;
 };
 
 /* This structure reports delta between master and slave */
@@ -857,11 +882,10 @@ struct msm_isp_event_data32 {
 #define VIDIOC_MSM_ISP_SET_DUAL_HW_MASTER_SLAVE \
 	_IOWR('V', BASE_VIDIOC_PRIVATE+22, struct msm_isp_set_dual_hw_ms_cmd)
 
-
 #define VIDIOC_MSM_ISP_MAP_BUF_START_FE \
-	_IOWR('V', BASE_VIDIOC_PRIVATE+21, struct msm_vfe_fetch_eng_start)
+	_IOWR('V', BASE_VIDIOC_PRIVATE+23, struct msm_vfe_fetch_eng_start)
 
 #define VIDIOC_MSM_ISP_UNMAP_BUF \
-	_IOWR('V', BASE_VIDIOC_PRIVATE+22, struct msm_isp_unmap_buf_req)
+	_IOWR('V', BASE_VIDIOC_PRIVATE+24, struct msm_isp_unmap_buf_req)
 
 #endif /* __MSMB_ISP__ */

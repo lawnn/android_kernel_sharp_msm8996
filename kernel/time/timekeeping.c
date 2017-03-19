@@ -1819,3 +1819,10 @@ void xtime_update(unsigned long ticks)
 	write_sequnlock(&jiffies_lock);
 	update_wall_time();
 }
+
+#ifdef CONFIG_SHLOG_SYSTEM
+unsigned long get_xtime_sec_addr(void)
+{
+	return (unsigned long)(&tk_core.timekeeper.xtime_sec);
+}
+#endif

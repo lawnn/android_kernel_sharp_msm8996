@@ -23,6 +23,9 @@
 #include <linux/sysrq.h>
 #include <linux/init.h>
 #include <linux/nmi.h>
+#ifdef CONFIG_SHLOG_SYSTEM
+#include <asm/cacheflush.h>
+#endif /* CONFIG_SHLOG_SYSTEM */
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/exception.h>
@@ -33,7 +36,11 @@
 /* Machine specific panic information string */
 char *mach_panic_string;
 
+#ifdef CONFIG_SHLOG_SYSTEM
+int panic_on_oops = 1;
+#else /* ! CONFIG_SHLOG_SYSTEM */
 int panic_on_oops = CONFIG_PANIC_ON_OOPS_VALUE;
+#endif /* ! CONFIG_SHLOG_SYSTEM */
 static unsigned long tainted_mask;
 static int pause_on_oops;
 static int pause_on_oops_flag;
@@ -117,6 +124,16 @@ void panic(const char *fmt, ...)
 		dump_stack();
 #endif
 
+#ifdef CONFIG_SHLOG_SYSTEM
+	/* Push out any further dirty data, and ensure cache is empty */
+	flush_cache_all();
+        /*outer_disable is not supported by 64bit kernel*/
+#ifndef CONFIG_ARM64
+	/*Push out the dirty data from external caches */
+        outer_disable();
+#endif /* CONFIG_ARM64 */
+#endif /* CONFIG_SHLOG_SYSTEM */
+
 	/*
 	 * If we have crashed and we have a crash kernel loaded let it handle
 	 * everything else.
@@ -156,6 +173,11 @@ void panic(const char *fmt, ...)
 		panic_blink = no_blink;
 
 	if (panic_timeout > 0) {
+#ifdef CONFIG_SHLOG_SYSTEM
+		printk(KERN_EMERG "Rebooting now.");
+		//Faster shutdown
+		touch_nmi_watchdog();
+#else /* ! CONFIG_SHLOG_SYSTEM */
 		/*
 		 * Delay timeout seconds before rebooting the machine.
 		 * We can't use the "normal" timers since we just panicked.
@@ -170,6 +192,7 @@ void panic(const char *fmt, ...)
 			}
 			mdelay(PANIC_TIMER_STEP);
 		}
+#endif /* ! CONFIG_SHLOG_SYSTEM */
 	}
 
 	trace_kernel_panic_late(0);

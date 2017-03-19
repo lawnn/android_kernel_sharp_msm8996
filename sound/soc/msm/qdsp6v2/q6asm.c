@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  * Author: Brian Swetland <swetland@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
@@ -51,6 +51,7 @@ enum {
 	ASM_RTAC_APR_CAL,
 	ASM_MAX_CAL_TYPES
 };
+#define FRAME_NUM             (8)
 
 /* TODO, combine them together */
 static DEFINE_MUTEX(session_lock);
@@ -423,6 +424,7 @@ static void q6asm_session_free(struct audio_client *ac)
 {
 	struct list_head		*ptr, *next;
 	struct asm_no_wait_node		*node;
+	unsigned long			flags;
 
 	pr_debug("%s: sessionid[%d]\n", __func__, ac->session);
 	rtac_remove_popp_from_adm_devices(ac->session);
@@ -431,12 +433,13 @@ static void q6asm_session_free(struct audio_client *ac)
 	ac->perf_mode = LEGACY_PCM_MODE;
 	ac->fptr_cache_ops = NULL;
 
+	spin_lock_irqsave(&ac->no_wait_que_spinlock, flags);
 	list_for_each_safe(ptr, next, &ac->no_wait_que) {
 		node = list_entry(ptr, struct asm_no_wait_node, list);
 		list_del(&node->list);
 		kfree(node);
 	}
-	list_del(&ac->no_wait_que);
+	spin_unlock_irqrestore(&ac->no_wait_que_spinlock, flags);
 	return;
 }
 
@@ -688,7 +691,8 @@ int send_asm_custom_topology(struct audio_client *ac)
 	atomic_set(&ac->mem_state, -1);
 	asm_top.hdr.opcode = ASM_CMD_ADD_TOPOLOGIES;
 	asm_top.payload_addr_lsw = lower_32_bits(cal_block->cal_data.paddr);
-	asm_top.payload_addr_msw = upper_32_bits(cal_block->cal_data.paddr);
+	asm_top.payload_addr_msw = msm_audio_populate_upper_32_bits(
+						cal_block->cal_data.paddr);
 	asm_top.mem_map_handle = cal_block->map_data.q6map_handle;
 	asm_top.payload_size = cal_block->cal_data.size;
 
@@ -1195,6 +1199,8 @@ int q6asm_audio_client_buf_alloc(unsigned int dir,
 			pr_debug("%s: buffer already allocated\n", __func__);
 			return 0;
 		}
+		if (bufcnt != FRAME_NUM)
+			goto fail;
 		mutex_lock(&ac->cmd_lock);
 		if (bufcnt > (LONG_MAX/sizeof(struct audio_buffer))) {
 			pr_err("%s: Buffer size overflows", __func__);
@@ -1750,8 +1756,8 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 			spin_lock_irqsave(&port->dsp_lock, dsp_flags);
 			if (lower_32_bits(port->buf[data->token].phys) !=
 			payload[0] ||
-			upper_32_bits(port->buf[data->token].phys) !=
-			payload[1]) {
+			msm_audio_populate_upper_32_bits(
+				port->buf[data->token].phys) !=	payload[1]) {
 				pr_debug("%s: Expected addr %pa\n",
 				__func__, &port->buf[data->token].phys);
 				pr_err("%s: rxedl[0x%x] rxedu [0x%x]\n",
@@ -1836,8 +1842,9 @@ static int32_t q6asm_callback(struct apr_client_data *data, void *priv)
 			port->buf[token].used = 0;
 			if (lower_32_bits(port->buf[token].phys) !=
 			payload[READDONE_IDX_BUFADD_LSW] ||
-			upper_32_bits(port->buf[token].phys) !=
-			payload[READDONE_IDX_BUFADD_MSW]) {
+			msm_audio_populate_upper_32_bits(
+				port->buf[token].phys) !=
+					payload[READDONE_IDX_BUFADD_MSW]) {
 				dev_vdbg(ac->dev, "%s: Expected addr %pa\n",
 					__func__, &port->buf[token].phys);
 				pr_err("%s: rxedl[0x%x] rxedu[0x%x]\n",
@@ -4330,7 +4337,7 @@ int q6asm_memory_map(struct audio_client *ac, phys_addr_t buf_add, int dir,
 	pr_debug("%s: buf_add 0x%pa, bufsz: %d\n", __func__,
 		&buf_add, bufsz);
 	mregions->shm_addr_lsw = lower_32_bits(buf_add);
-	mregions->shm_addr_msw = upper_32_bits(buf_add);
+	mregions->shm_addr_msw = msm_audio_populate_upper_32_bits(buf_add);
 	mregions->mem_size_bytes = bufsz;
 	++mregions;
 
@@ -4535,7 +4542,8 @@ static int q6asm_memory_map_regions(struct audio_client *ac, int dir,
 	for (i = 0; i < bufcnt_t; i++) {
 		ab = &port->buf[i];
 		mregions->shm_addr_lsw = lower_32_bits(ab->phys);
-		mregions->shm_addr_msw = upper_32_bits(ab->phys);
+		mregions->shm_addr_msw =
+				msm_audio_populate_upper_32_bits(ab->phys);
 		mregions->mem_size_bytes = bufsz_t;
 		++mregions;
 	}
@@ -4949,7 +4957,8 @@ int q6asm_dts_eagle_set(struct audio_client *ac, int param_id, uint32_t size,
 		pr_debug("DTS_EAGLE_ASM - %s: using out of band memory (virtual %p, physical %lu)\n",
 			__func__, po->kvaddr, (long)po->paddr);
 		ad->param.data_payload_addr_lsw = lower_32_bits(po->paddr);
-		ad->param.data_payload_addr_msw = upper_32_bits(po->paddr);
+		ad->param.data_payload_addr_msw =
+				msm_audio_populate_upper_32_bits(po->paddr);
 		list_for_each_safe(ptr, next, &ac->port[IN].mem_map_handle) {
 			node = list_entry(ptr, struct asm_buffer_node, list);
 			if (node->buf_phys_addr == po->paddr) {
@@ -5060,7 +5069,8 @@ int q6asm_dts_eagle_get(struct audio_client *ac, int param_id, uint32_t size,
 		pr_debug("DTS_EAGLE_ASM - %s: using out of band memory (virtual %p, physical %lu)\n",
 			 __func__, po->kvaddr, (long)po->paddr);
 		ad->param.data_payload_addr_lsw = lower_32_bits(po->paddr);
-		ad->param.data_payload_addr_msw = upper_32_bits(po->paddr);
+		ad->param.data_payload_addr_msw =
+				msm_audio_populate_upper_32_bits(po->paddr);
 		list_for_each_safe(ptr, next, &ac->port[IN].mem_map_handle) {
 			node = list_entry(ptr, struct asm_buffer_node, list);
 			if (node->buf_phys_addr == po->paddr) {
@@ -5515,7 +5525,7 @@ static int __q6asm_read(struct audio_client *ac, bool is_custom_len_reqd,
 
 		read.hdr.opcode = ASM_DATA_CMD_READ_V2;
 		read.buf_addr_lsw = lower_32_bits(ab->phys);
-		read.buf_addr_msw = upper_32_bits(ab->phys);
+		read.buf_addr_msw = msm_audio_populate_upper_32_bits(ab->phys);
 
 		list_for_each_safe(ptr, next, &ac->port[OUT].mem_map_handle) {
 			buf_node = list_entry(ptr, struct asm_buffer_node,
@@ -5593,7 +5603,7 @@ int q6asm_read_nolock(struct audio_client *ac)
 
 		read.hdr.opcode = ASM_DATA_CMD_READ_V2;
 		read.buf_addr_lsw = lower_32_bits(ab->phys);
-		read.buf_addr_msw = upper_32_bits(ab->phys);
+		read.buf_addr_msw = msm_audio_populate_upper_32_bits(ab->phys);
 		read.buf_size = ab->size;
 		read.seq_id = port->dsp_buf;
 		read.hdr.token = port->dsp_buf;
@@ -5656,7 +5666,7 @@ int q6asm_async_write(struct audio_client *ac,
 	write.hdr.token = param->uid;
 	write.hdr.opcode = ASM_DATA_CMD_WRITE_V2;
 	write.buf_addr_lsw = lower_32_bits(param->paddr);
-	write.buf_addr_msw = upper_32_bits(param->paddr);
+	write.buf_addr_msw = msm_audio_populate_upper_32_bits(param->paddr);
 	write.buf_size = param->len;
 	write.timestamp_msw = param->msw_ts;
 	write.timestamp_lsw = param->lsw_ts;
@@ -5732,7 +5742,7 @@ int q6asm_async_read(struct audio_client *ac,
 	read.hdr.token = param->paddr;
 	read.hdr.opcode = ASM_DATA_CMD_READ_V2;
 	read.buf_addr_lsw = lower_32_bits(param->paddr);
-	read.buf_addr_msw = upper_32_bits(param->paddr);
+	read.buf_addr_msw = msm_audio_populate_upper_32_bits(param->paddr);
 	read.buf_size = param->len;
 	read.seq_id = param->uid;
 	liomode = (NT_MODE | ASYNC_IO_MODE);
@@ -5803,7 +5813,7 @@ int q6asm_write(struct audio_client *ac, uint32_t len, uint32_t msw_ts,
 		write.hdr.token = port->dsp_buf;
 		write.hdr.opcode = ASM_DATA_CMD_WRITE_V2;
 		write.buf_addr_lsw = lower_32_bits(ab->phys);
-		write.buf_addr_msw = upper_32_bits(ab->phys);
+		write.buf_addr_msw = msm_audio_populate_upper_32_bits(ab->phys);
 		write.buf_size = len;
 		write.seq_id = port->dsp_buf;
 		write.timestamp_lsw = lsw_ts;
@@ -5877,7 +5887,7 @@ int q6asm_write_nolock(struct audio_client *ac, uint32_t len, uint32_t msw_ts,
 		write.hdr.token = port->dsp_buf;
 		write.hdr.opcode = ASM_DATA_CMD_WRITE_V2;
 		write.buf_addr_lsw = lower_32_bits(ab->phys);
-		write.buf_addr_msw = upper_32_bits(ab->phys);
+		write.buf_addr_msw = msm_audio_populate_upper_32_bits(ab->phys);
 		write.buf_size = len;
 		write.seq_id = port->dsp_buf;
 		write.timestamp_lsw = lsw_ts;
@@ -6711,7 +6721,8 @@ int q6asm_send_cal(struct audio_client *ac)
 	payload_params.data_payload_addr_lsw =
 			lower_32_bits(cal_block->cal_data.paddr);
 	payload_params.data_payload_addr_msw =
-			upper_32_bits(cal_block->cal_data.paddr);
+			msm_audio_populate_upper_32_bits(
+						cal_block->cal_data.paddr);
 	payload_params.mem_map_handle = cal_block->map_data.q6map_handle;
 	payload_params.data_payload_size = cal_block->cal_data.size;
 	memcpy(((u8 *)asm_params), &hdr, sizeof(struct apr_hdr));

@@ -952,8 +952,10 @@ static int usb_register_bus(struct usb_bus *bus)
 
 	usb_notify_add_bus(bus);
 
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 	dev_info (bus->controller, "new USB bus registered, assigned bus "
 		  "number %d\n", bus->busnum);
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 	return 0;
 
 error_find_busnum:
@@ -971,7 +973,9 @@ error_find_busnum:
  */
 static void usb_deregister_bus (struct usb_bus *bus)
 {
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 	dev_info (bus->controller, "USB bus %d deregistered\n", bus->busnum);
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 
 	/*
 	 * NOTE: make sure that all the devices are removed by the
@@ -2524,7 +2528,7 @@ static void hcd_release(struct kref *kref)
 	struct usb_hcd *hcd = container_of (kref, struct usb_hcd, kref);
 
 	mutex_lock(&usb_port_peer_mutex);
-	if (usb_hcd_is_primary_hcd(hcd))
+	if (hcd->primary_hcd == hcd)
 		kfree(hcd->bandwidth_mutex);
 	if (hcd->shared_hcd) {
 		struct usb_hcd *peer = hcd->shared_hcd;
@@ -2586,10 +2590,12 @@ static int usb_hcd_request_irqs(struct usb_hcd *hcd,
 			return retval;
 		}
 		hcd->irq = irqnum;
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 		dev_info(hcd->self.controller, "irq %d, %s 0x%08llx\n", irqnum,
 				(hcd->driver->flags & HCD_MEMORY) ?
 					"io mem" : "io base",
 					(unsigned long long)hcd->rsrc_start);
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 	} else {
 		hcd->irq = 0;
 		if (hcd->rsrc_start)
@@ -2672,8 +2678,9 @@ int usb_add_hcd(struct usb_hcd *hcd,
 			hcd->phy = phy;
 		}
 	}
-
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 	dev_info(hcd->self.controller, "%s\n", hcd->product_desc);
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 
 	/* Keep old behaviour if authorized_default is not in [0, 1]. */
 	if (authorized_default < 0 || authorized_default > 1)
@@ -2844,7 +2851,9 @@ void usb_remove_hcd(struct usb_hcd *hcd)
 {
 	struct usb_device *rhdev = hcd->self.root_hub;
 
+#ifdef CONFIG_USB_DEBUG_SH_LOG
 	dev_info(hcd->self.controller, "remove, state %x\n", hcd->state);
+#endif /* CONFIG_USB_DEBUG_SH_LOG */
 
 	usb_get_dev(rhdev);
 	sysfs_remove_group(&rhdev->dev.kobj, &usb_bus_attr_group);

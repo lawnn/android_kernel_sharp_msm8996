@@ -1159,6 +1159,7 @@ ecm_qc_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
 	return status;
 }
 
+#ifndef CONFIG_USB_ANDROID_SH_CUST
 static int ecm_qc_init(void)
 {
 	int ret;
@@ -1173,3 +1174,4 @@ static int ecm_qc_init(void)
 
 	return ret;
 }
+#endif /* CONFIG_USB_ANDROID_SH_CUST */

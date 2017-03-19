@@ -24,17 +24,46 @@ struct mmc_gpio {
 	bool override_ro_active_level;
 	bool override_cd_active_level;
 	char *ro_label;
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	bool status;
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 	char cd_label[0];
 };
+
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+int mmc_cd_check_status(struct mmc_host *host)
+{
+	struct mmc_gpio *p = host->slot.handler_priv;
+	return p->status;
+}
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 static irqreturn_t mmc_gpio_cd_irqt(int irq, void *dev_id)
 {
 	/* Schedule a card detection after a debounce timeout */
 	struct mmc_host *host = dev_id;
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	struct mmc_gpio *ctx = host->slot.handler_priv;
+	int status;
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 	host->trigger_card_event = true;
 	mmc_detect_change(host, msecs_to_jiffies(200));
 
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	status = mmc_gpio_get_cd(host);
+	if (unlikely(status < 0))
+		goto out;
+
+	if (status ^ ctx->status) {
+		pr_info("%s: slot status change detected (%d -> %d), GPIO_ACTIVE_%s\n",
+				mmc_hostname(host), ctx->status, status,
+				(host->caps2 & MMC_CAP2_CD_ACTIVE_HIGH) ?
+				"HIGH" : "LOW");
+		ctx->status = status;
+	}
+out:
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 	return IRQ_HANDLED;
 }
 
@@ -154,6 +183,14 @@ void mmc_gpiod_request_cd_irq(struct mmc_host *host)
 	 */
 	if (irq >= 0 && host->caps & MMC_CAP_NEEDS_POLL)
 		irq = -EINVAL;
+
+#ifdef CONFIG_MMC_SD_BATTLOG_CUST_SH
+	ret = mmc_gpio_get_cd(host);
+	if (ret < 0)
+		return;
+
+	ctx->status = ret;
+#endif /* CONFIG_MMC_SD_BATTLOG_CUST_SH */
 
 	if (irq >= 0) {
 		ret = devm_request_threaded_irq(&host->class_dev, irq,

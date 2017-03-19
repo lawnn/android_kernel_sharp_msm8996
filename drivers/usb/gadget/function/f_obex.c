@@ -39,6 +39,18 @@ struct f_obex {
 	u8				port_num;
 	u8				can_activate;
 };
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+struct obex_port_sts {
+	struct work_struct	work;
+	int			open_sts;
+};
+
+static struct obex_port_sts *obex_sts = NULL;
+
+static void obex_setinterface_work(struct work_struct *);
+
+static int obex_notify_uevent(void);
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 
 static inline struct f_obex *func_to_obex(struct usb_function *f)
 {
@@ -214,7 +226,9 @@ static int obex_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 			gserial_disconnect(&obex->port);
 		}
 
+#ifndef CONFIG_USB_ANDROID_SH_SERIALS
 		if (!obex->port.in->desc || !obex->port.out->desc) {
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 			dev_dbg(&cdev->gadget->dev,
 				"init obex ttyGS%d\n", obex->port_num);
 			if (config_ep_by_speed(cdev->gadget, f,
@@ -225,14 +239,26 @@ static int obex_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 				obex->port.in->desc = NULL;
 				goto fail;
 			}
+#ifndef CONFIG_USB_ANDROID_SH_SERIALS
 		}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 
+#ifndef CONFIG_USB_ANDROID_SH_SERIALS
 		if (alt == 1) {
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 			dev_dbg(&cdev->gadget->dev,
 				"activate obex ttyGS%d\n", obex->port_num);
 			gserial_connect(&obex->port, obex->port_num);
+#ifndef CONFIG_USB_ANDROID_SH_SERIALS
 		}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+		if (obex_sts) {
+			obex_sts->open_sts = alt;
+			schedule_work(&obex_sts->work);
+		}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 	} else
 		goto fail;
 
@@ -258,6 +284,12 @@ static void obex_disable(struct usb_function *f)
 
 	dev_dbg(&cdev->gadget->dev, "obex ttyGS%d disable\n", obex->port_num);
 	gserial_disconnect(&obex->port);
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	if (obex_sts && obex_sts->open_sts) {
+		obex_sts->open_sts = 0;
+		schedule_work(&obex_sts->work);
+	}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 }
 
 /*-------------------------------------------------------------------------*/
@@ -295,6 +327,21 @@ static void obex_disconnect(struct gserial *g)
 }
 
 /*-------------------------------------------------------------------------*/
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+static void obex_suspend(struct usb_function *f)
+{
+	struct f_obex	*obex = func_to_obex(f);
+	struct usb_composite_dev *cdev = f->config->cdev;
+
+	DBG(cdev, "obex ttyGS%d suspend\n", obex->port_num);
+}
+
+static void obex_setinterface_work(struct work_struct *w)
+{
+	if (obex_sts)
+		obex_notify_uevent();
+}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 
 /* Some controllers can't support CDC OBEX ... */
 static inline bool can_support_obex(struct usb_configuration *c)
@@ -319,6 +366,12 @@ static int obex_bind(struct usb_configuration *c, struct usb_function *f)
 	int			status;
 	struct usb_ep		*ep;
 
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	if (!obex_sts) {
+		status = -ENODEV;
+		goto fail;
+	}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 	if (!can_support_obex(c))
 		return -EINVAL;
 
@@ -381,12 +434,16 @@ static int obex_bind(struct usb_configuration *c, struct usb_function *f)
 	/* Avoid letting this gadget enumerate until the userspace
 	 * OBEX server is active.
 	 */
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	obex->can_activate = false;
+#else /* CONFIG_USB_ANDROID_SH_SERIALS */
 	status = usb_function_deactivate(f);
 	if (status < 0)
 		WARNING(cdev, "obex ttyGS%d: can't prevent enumeration, %d\n",
 			obex->port_num, status);
 	else
 		obex->can_activate = true;
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
 
 
 	dev_dbg(&cdev->gadget->dev, "obex ttyGS%d: %s speed IN/%s OUT/%s\n",
@@ -407,6 +464,92 @@ fail:
 
 	return status;
 }
+#ifdef USBF_OBEX_INCLUDED
+
+static void
+obex_old_unbind(struct usb_configuration *c, struct usb_function *f)
+{
+#ifndef CONFIG_USB_ANDROID_SH_CUST
+	obex_string_defs[OBEX_CTRL_IDX].id = 0;
+#endif /* CONFIG_USB_ANDROID_SH_CUST */
+	usb_free_all_descriptors(f);
+	kfree(func_to_obex(f));
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	if (obex_sts) {
+		cancel_work_sync(&obex_sts->work);
+		kfree(obex_sts);
+		obex_sts = NULL;
+	}
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
+}
+
+/**
+ * obex_bind_config - add a CDC OBEX function to a configuration
+ * @c: the configuration to support the CDC OBEX instance
+ * @port_num: /dev/ttyGS* port this interface will use
+ * Context: single threaded during gadget setup
+ *
+ * Returns zero on success, else negative errno.
+ */
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+int obex_bind_config(struct usb_configuration *c, u8 port_num)
+#else /* CONFIG_USB_ANDROID_SH_SERIALS */
+int __init obex_bind_config(struct usb_configuration *c, u8 port_num)
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
+{
+	struct f_obex	*obex;
+	int		status;
+
+	/* allocate and initialize one new instance */
+	obex = kzalloc(sizeof *obex, GFP_KERNEL);
+	if (!obex)
+		return -ENOMEM;
+
+	obex->port_num = port_num;
+
+	obex->port.connect = obex_connect;
+	obex->port.disconnect = obex_disconnect;
+
+	obex->port.func.name = "obex";
+	obex->port.func.strings = obex_strings;
+	/* descriptors are per-instance copies */
+	obex->port.func.bind = obex_bind;
+	obex->port.func.unbind = obex_old_unbind;
+	obex->port.func.set_alt = obex_set_alt;
+	obex->port.func.get_alt = obex_get_alt;
+	obex->port.func.disable = obex_disable;
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	obex->port.func.suspend = obex_suspend;
+
+	obex_sts = kzalloc(sizeof *obex_sts, GFP_KERNEL);
+	if (!obex_sts) {
+		status = -ENOMEM;
+		goto fail;
+	}
+	INIT_WORK(&obex_sts->work, obex_setinterface_work);
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
+
+	status = usb_add_function(c, &obex->port.func);
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	if (!status)
+		goto done;
+#else /* CONFIG_USB_ANDROID_SH_SERIALS */
+	if (status)
+		kfree(obex);
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
+
+#ifdef CONFIG_USB_ANDROID_SH_SERIALS
+	if(obex_sts)
+		kfree(obex_sts);
+fail:
+	if(obex)
+		kfree(obex);
+done:
+#endif /* CONFIG_USB_ANDROID_SH_SERIALS */
+	return status;
+}
+
+#else
 
 static inline struct f_serial_opts *to_f_serial_opts(struct config_item *item)
 {
@@ -534,5 +677,8 @@ static struct usb_function *obex_alloc(struct usb_function_instance *fi)
 }
 
 DECLARE_USB_FUNCTION_INIT(obex, obex_alloc_inst, obex_alloc);
+
+#endif
+
 MODULE_AUTHOR("Felipe Balbi");
 MODULE_LICENSE("GPL");

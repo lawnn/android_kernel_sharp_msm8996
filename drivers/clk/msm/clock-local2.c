@@ -36,6 +36,10 @@
 /* For clock without halt checking, wait this long after enables/disables. */
 #define HALT_CHECK_DELAY_US	500
 
+#ifdef CONFIG_SHSYS_CUST
+#define RCG_FORCE_DISABLE_DELAY_US	100
+#endif	//CONFIG_SHSYS_CUST
+
 /*
  * When updating an RCG configuration, check the update bit up to this number
  * number of times (with a 1 us delay in between) before continuing.
@@ -105,14 +109,26 @@ struct div_map {
  */
 static void rcg_update_config(struct rcg_clk *rcg)
 {
+#ifndef CONFIG_SHSYS_CUST
 	u32 cmd_rcgr_regval, count;
+#else	// not CONFIG_SHSYS_CUST
+	u32 cmd_rcgr_regval;
+	int count = UPDATE_CHECK_MAX_LOOPS;
+
+	if (rcg->non_local_control_timeout)
+		count = rcg->non_local_control_timeout;
+#endif	// not CONFIG_SHSYS_CUST
 
 	cmd_rcgr_regval = readl_relaxed(CMD_RCGR_REG(rcg));
 	cmd_rcgr_regval |= CMD_RCGR_CONFIG_UPDATE_BIT;
 	writel_relaxed(cmd_rcgr_regval, CMD_RCGR_REG(rcg));
 
 	/* Wait for update to take effect */
+#ifndef CONFIG_SHSYS_CUST
 	for (count = UPDATE_CHECK_MAX_LOOPS; count > 0; count--) {
+#else	// not CONFIG_SHSYS_CUST
+	for (; count > 0; count--) {
+#endif	// not CONFIG_SHSYS_CUST
 		if (!(readl_relaxed(CMD_RCGR_REG(rcg)) &
 				CMD_RCGR_CONFIG_UPDATE_BIT))
 			return;
@@ -124,10 +140,21 @@ static void rcg_update_config(struct rcg_clk *rcg)
 
 static void rcg_on_check(struct rcg_clk *rcg)
 {
+#ifndef CONFIG_SHSYS_CUST
 	int count;
+#else	// not CONFIG_SHSYS_CUST
+	int count = UPDATE_CHECK_MAX_LOOPS;
+
+	if (rcg->non_local_control_timeout)
+		count = rcg->non_local_control_timeout;
+#endif	// not CONFIG_SHSYS_CUST
 
 	/* Wait for RCG to turn on */
+#ifndef CONFIG_SHSYS_CUST
 	for (count = UPDATE_CHECK_MAX_LOOPS; count > 0; count--) {
+#else	// not CONFIG_SHSYS_CUST
+	for (; count > 0; count--) {
+#endif	// not CONFIG_SHSYS_CUST
 		if (!(readl_relaxed(CMD_RCGR_REG(rcg)) &
 				CMD_RCGR_ROOT_STATUS_BIT))
 			return;
@@ -211,6 +238,10 @@ static void rcg_clear_force_enable(struct rcg_clk *rcg)
 	cmd_rcgr_regval &= ~CMD_RCGR_ROOT_ENABLE_BIT;
 	writel_relaxed(cmd_rcgr_regval, CMD_RCGR_REG(rcg));
 	spin_unlock_irqrestore(&local_clock_reg_lock, flags);
+#ifdef CONFIG_SHSYS_CUST
+	/* Add a delay of 100usecs to let the RCG disable */
+	udelay(RCG_FORCE_DISABLE_DELAY_US);
+#endif	//CONFIG_SHSYS_CUST
 }
 
 static int rcg_clk_enable(struct clk *c)
@@ -291,6 +322,7 @@ static int rcg_clk_set_rate(struct clk *c, unsigned long rate)
 
 	BUG_ON(!rcg->set_rate);
 
+#ifndef CONFIG_SHSYS_CUST
 	/*
 	 * Perform clock-specific frequency switch operations.
 	 *
@@ -310,6 +342,22 @@ static int rcg_clk_set_rate(struct clk *c, unsigned long rate)
 		rcg->set_rate(rcg, nf);
 		rcg_clear_force_enable(rcg);
 	}
+#else	// not CONFIG_SHSYS_CUST
+	/* Perform clock-specific frequency switch operations. */
+	if ((rcg->non_local_children && c->count) ||
+			rcg->non_local_control_timeout) {
+		/*
+		 * Force enable the RCG here since the clock could be disabled
+		 * between pre_reparent and set_rate.
+		 */
+		rcg_set_force_enable(rcg);
+		rcg->set_rate(rcg, nf);
+		rcg_clear_force_enable(rcg);
+	} else if (!rcg->non_local_children) {
+		rcg->set_rate(rcg, nf);
+	}
+#endif	// not CONFIG_SHSYS_CUST
+
 	/*
 	 * If non_local_children is set and the RCG is not enabled,
 	 * the following operations switch parent in software and cache
@@ -640,6 +688,14 @@ static int branch_clk_enable(struct clk *c)
 	cbcr_val |= CBCR_BRANCH_ENABLE_BIT;
 	writel_relaxed(cbcr_val, CBCR_REG(branch));
 	spin_unlock_irqrestore(&local_clock_reg_lock, flags);
+
+	/*
+	 * For clocks controlled by other masters via voting registers,
+	 * delay polling for the status bit to allow previous clk_disable
+	 * by the GDS controller to go through.
+	 */
+	if (branch->no_halt_check_on_disable)
+		udelay(5);
 
 	/* Wait for clock to enable before continuing. */
 	branch_clk_halt_check(c, branch->halt_check, CBCR_REG(branch),
@@ -1628,7 +1684,10 @@ static void __iomem *mux_clk_list_registers(struct mux_clk *clk, int n,
 static struct div_map postdiv_map[] = {
 	{  0x0, 1  },
 	{  0x1, 2  },
+	{  0x3, 3  },
 	{  0x3, 4  },
+	{  0x5, 5  },
+	{  0x7, 7  },
 	{  0x7, 8  },
 	{  0xF, 16 },
 };

@@ -35,6 +35,9 @@
 
 #include <asm/fb.h>
 
+#ifdef CONFIG_SHDISP /* CUST_ID_00054 */
+#include "../../msm/mdss/mdss_shdisp.h"
+#endif /* CONFIG_SHDISP */
 
     /*
      *  Frame buffer device initialization and setup routines
@@ -1206,7 +1209,14 @@ static long do_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			return -ENODEV;
 		}
 		info->flags |= FBINFO_MISC_USEREVENT;
+#ifdef CONFIG_SHDISP /* CUST_ID_00054 */
+		SHDISP_VIDEO_PERFORMANCE("RESUME MSMFB BLANK-START 0010 START\n");
+		pr_info("MSMFB FBIOBLANK(%ld) called.\n", arg);
+#endif /* CONFIG_SHDISP */
 		ret = fb_blank(info, arg);
+#ifdef CONFIG_SHDISP /* CUST_ID_00054 */
+		SHDISP_VIDEO_PERFORMANCE("RESUME MSMFB BLANK-START 0010 END\n");
+#endif /* CONFIG_SHDISP */
 		info->flags &= ~FBINFO_MISC_USEREVENT;
 		unlock_fb_info(info);
 		console_unlock();

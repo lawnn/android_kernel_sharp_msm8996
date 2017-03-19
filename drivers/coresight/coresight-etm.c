@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -2253,12 +2253,10 @@ static int etm_probe(struct platform_device *pdev)
 	    coresight_fuse_apps_access_disabled())
 		return -EPERM;
 
-	if (pdev->dev.of_node) {
-		pdata = of_get_coresight_platform_data(dev, pdev->dev.of_node);
-		if (IS_ERR(pdata))
-			return PTR_ERR(pdata);
-		pdev->dev.platform_data = pdata;
-	}
+	pdata = of_get_coresight_platform_data(dev, pdev->dev.of_node);
+	if (IS_ERR(pdata))
+		return PTR_ERR(pdata);
+	pdev->dev.platform_data = pdata;
 
 	drvdata = devm_kzalloc(dev, sizeof(*drvdata), GFP_KERNEL);
 	if (!drvdata)
@@ -2279,9 +2277,8 @@ static int etm_probe(struct platform_device *pdev)
 	mutex_init(&drvdata->mutex);
 	wakeup_source_init(&drvdata->ws, "coresight-etm");
 
-	if (pdev->dev.of_node)
-		drvdata->pcsave_impl = of_property_read_bool(pdev->dev.of_node,
-							     "qcom,pc-save");
+	drvdata->pcsave_impl = of_property_read_bool(pdev->dev.of_node,
+						     "qcom,pc-save");
 
 	drvdata->cpu = -1;
 	cpu_node = of_parse_phandle(pdev->dev.of_node, "coresight-etm-cpu", 0);
@@ -2302,9 +2299,6 @@ static int etm_probe(struct platform_device *pdev)
 		goto err0;
 	}
 
-	if (count++ == 0)
-		register_hotcpu_notifier(&etm_cpu_notifier);
-
 	drvdata->clk = devm_clk_get(dev, "core_clk");
 	if (IS_ERR(drvdata->clk)) {
 		ret = PTR_ERR(drvdata->clk);
@@ -2318,6 +2312,9 @@ static int etm_probe(struct platform_device *pdev)
 	ret = clk_prepare_enable(drvdata->clk);
 	if (ret)
 		goto err0;
+
+	if (count++ == 0)
+		register_hotcpu_notifier(&etm_cpu_notifier);
 
 	get_online_cpus();
 

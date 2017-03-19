@@ -640,8 +640,7 @@ static int msm_iommu_sec_ptbl_map_range(struct msm_iommu_drvdata *iommu_drvdata,
 			return -EINVAL;
 		}
 		while (offset < len) {
-			pa += chunk_offset;
-			pa_list[cnt] = pa;
+			pa_list[cnt] = pa + chunk_offset;
 			chunk_offset += SZ_1M;
 			offset += SZ_1M;
 			cnt++;
@@ -745,6 +744,9 @@ static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 		ret = -EINVAL;
 		goto fail;
 	}
+
+	if (!(priv->client_name))
+		priv->client_name = dev_name(dev);
 
 	iommu_drvdata = dev_get_drvdata(dev->parent);
 	ctx_drvdata = dev_get_drvdata(dev);
@@ -1024,6 +1026,12 @@ static int msm_iommu_domain_set_attr(struct iommu_domain *domain,
 		/*
 		 * MSM iommu driver doesn't set the VMID for
 		 * any domain.
+		 */
+		break;
+	case DOMAIN_ATTR_ATOMIC:
+		/*
+		 * Map / unmap in legacy driver are by default atomic. So
+		 * we don't need to do anything here.
 		 */
 		break;
 	default:

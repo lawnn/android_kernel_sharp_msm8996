@@ -206,6 +206,12 @@
 				status = "disabled";
 			};
 
+			gpio@d400 {
+				reg = <0xd400 0x100>;
+				qcom,pin-num = <21>;
+				status = "disabled";
+			};
+
 			gpio@d500 {
 				reg = <0xd500 0x100>;
 				qcom,pin-num = <22>;

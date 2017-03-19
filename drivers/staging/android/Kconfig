@@ -71,7 +71,6 @@ config SYNC
 	bool "Synchronization framework"
 	default n
 	select ANON_INODES
-	select DMA_SHARED_BUFFER
 	---help---
 	  This option enables the framework for synchronization between multiple
 	  drivers.  Sync implementations can take advantage of hardware
@@ -113,6 +112,14 @@ config ONESHOT_SYNC_USER
 source "drivers/staging/android/ion/Kconfig"
 
 source "drivers/staging/android/fiq_debugger/Kconfig"
+
+config ANDROID_ENGINEERING
+	bool "Android for Engineering"
+	default n
+
+config ANDROID_RECOVERY_BUILD
+    bool "Android for a recovery image build"
+    default n
 
 endif # if ANDROID
 

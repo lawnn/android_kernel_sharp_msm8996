@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, 2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -347,6 +347,14 @@ static int msm_compr_send_ddp_cfg(struct audio_client *ac,
 {
 	int i, rc;
 	pr_debug("%s\n", __func__);
+
+	if (ddp->params_length / 2 > SND_DEC_DDP_MAX_PARAMS) {
+		pr_err("%s: Invalid number of params %u, max allowed %u\n",
+			__func__, ddp->params_length / 2,
+			SND_DEC_DDP_MAX_PARAMS);
+		return -EINVAL;
+	}
+
 	for (i = 0; i < ddp->params_length/2; i++) {
 		rc = q6asm_ds1_set_endp_params(ac, ddp->params_id[i],
 						ddp->params_value[i]);
@@ -1062,6 +1070,7 @@ static int msm_compr_ioctl_shared(struct snd_pcm_substream *substream,
 				__func__, ddp->params_length);
 				return -EINVAL;
 			}
+                        params_length = ddp->params_length*sizeof(int);
 			if (params_length > MAX_AC3_PARAM_SIZE) {
 				/*MAX is 36*sizeof(int) this should not happen*/
 				pr_err("%s: params_length(%d) is greater than %zd\n",

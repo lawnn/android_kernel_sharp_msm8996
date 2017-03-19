@@ -2065,14 +2065,6 @@ void resume_console(void)
 	console_unlock();
 }
 
-static void __cpuinit console_flush(struct work_struct *work)
-{
-	console_lock();
-	console_unlock();
-}
-
-static __cpuinitdata DECLARE_WORK(console_cpu_notify_work, console_flush);
-
 /**
  * console_cpu_notify - print deferred console messages after CPU hotplug
  * @self: notifier struct
@@ -2092,23 +2084,15 @@ static int console_cpu_notify(struct notifier_block *self,
 {
 	switch (action) {
 	case CPU_ONLINE:
-		console_lock();
-		console_unlock();
-		break;
 	case CPU_DEAD:
 	case CPU_DOWN_FAILED:
 	case CPU_UP_CANCELED:
+	case CPU_DYING:
 #ifdef CONFIG_CONSOLE_FLUSH_ON_HOTPLUG
 		console_lock();
 		console_unlock();
 #endif
 		break;
-	/* invoked with preemption disabled, so defer */
-	case CPU_DYING:
-		if (!console_trylock())
-			schedule_work(&console_cpu_notify_work);
-		else
-			console_unlock();
 	}
 	return NOTIFY_OK;
 }
@@ -3098,3 +3082,42 @@ void show_regs_print_info(const char *log_lvl)
 }
 
 #endif
+
+#ifdef CONFIG_SHLOG_SYSTEM
+unsigned long get_log_buf_addr(void)
+{
+	return (unsigned long)(log_buf);
+}
+unsigned long get_log_buf_len(void)
+{
+	return (unsigned long)(log_buf_len);
+}
+unsigned long get_log_first_seq_addr(void)
+{
+	return (unsigned long)(&log_first_seq);
+}
+unsigned long get_log_first_idx_addr(void)
+{
+	return (unsigned long)(&log_first_idx);
+}
+unsigned long get_log_next_seq_addr(void)
+{
+	return (unsigned long)(&log_next_seq);
+}
+#if defined(CONFIG_OOPS_LOG_BUFFER)
+unsigned long get_log_oops_buf_addr(void)
+{
+	return (unsigned long)(&__log_oops_buf);
+}
+unsigned long get_log_oops_first_seq_addr(void)
+{
+	return (unsigned long)(&log_oops_first_seq);
+}
+unsigned long get_log_oops_last_seq_addr(void)
+{
+	return (unsigned long)(&log_oops_last_seq);
+}
+#endif /* CONFIG_OOPS_LOG_BUFFER */
+#endif /* CONFIG_SHLOG_SYSTEM */
+
+

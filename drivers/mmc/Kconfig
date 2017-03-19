@@ -27,6 +27,114 @@ config MMC_PERF_PROFILING
 	  If you say Y here, support will be added for collecting
 	  performance numbers at the MMC Queue and Host layers.
 
+config MMC_CUST_SH
+	bool "SHARP MMC driver customized"
+	depends on MMC
+	default n
+
+config MMC_EMMC_CUST_SH
+	bool "SHARP eMMC driver customized"
+	depends on MMC_CUST_SH
+	default n
+
+config DRIVESTRENGTH_EMMC_CUST_SH
+	bool "SHARP eMMC customization for drive strength"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config HS400_DRIVER_TYPE_EMMC_CUST_SH
+	int "SHARP eMMC customization for driver type in HS400 mode"
+	depends on DRIVESTRENGTH_EMMC_CUST_SH
+	range 0 4
+	default 0
+
+config HS200_DRIVER_TYPE_EMMC_CUST_SH
+	int "SHARP eMMC customization for driver type in HS200 mode"
+	depends on DRIVESTRENGTH_EMMC_CUST_SH
+	range 0 4
+	default 0
+
+config HS_DRIVER_TYPE_EMMC_CUST_SH
+	int "SHARP eMMC customization for driver type in HS mode"
+	depends on DRIVESTRENGTH_EMMC_CUST_SH
+	range 0 4
+	default 0
+
+config FFU_EMMC_CUST_SH
+	bool "SHARP eMMC customization for ffu"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config MMC_BUG_FIX_CUST_SH
+	bool "SHARP eMMC customization for bug fix"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config ERR_DETECT_EMMC_CUST_SH
+	bool "SHARP eMMC customization for error detect"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config CLKGATE_TIME_EMMC_CUST_SH
+	bool "SHARP eMMC customization for clkgate time"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config DISCARD_EMMC_CUST_SH
+	bool "SHARP eMMC customization for discard"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config TIMEOUTCTRL_EMMC_CUST_SH
+	bool "SHARP eMMC customization for timeout control"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config RW_PROTECT_EMMC_CUST_SH
+	bool "SHARP eMMC customization for read/write protect"
+	depends on MMC_EMMC_CUST_SH
+	default n
+
+config ERR_RETRY_MMC_CUST_SH
+	bool "SHARP MMC customization for error retry"
+	depends on MMC_CUST_SH
+	default n
+
+config MMC_SD_CUST_SH
+	bool "SHARP SD driver customized"
+	depends on MMC_CUST_SH
+	default n
+
+config MMC_SD_ENABLE_ONLY_DDR50_CUST_SH
+	bool "SHARP SD driver customized for enable DDR50 mode"
+	depends on MMC_SD_CUST_SH
+	default n
+
+config MMC_SD_ECO_MODE_CUST_SH
+	bool "SHARP SD driver customized for Reduce the noise interference between SD access and DTV"
+	depends on MMC_SD_CUST_SH
+	default n
+
+config MMC_SD_DISABLE_CLK_SCALE_CUST_SH
+	bool "SHARP SD driver customized for disable Clock Scaling"
+	depends on MMC_SD_CUST_SH
+	default n
+
+config MMC_SD_PENDING_RESUME_CUST_SH
+	bool "SHARP SD driver customized for pending resume"
+	depends on MMC_SD_CUST_SH
+	default n
+
+config MMC_SD_BATTLOG_CUST_SH
+	bool "SHARP SD driver customized for logging"
+	depends on MMC_SD_CUST_SH
+	default n
+
+config CLOCKTIME_MMC_CUST_SH
+	bool "SHARP MMC clocktime customized"
+	depends on MMC_CUST_SH
+	default n
+
 if MMC
 
 source "drivers/mmc/core/Kconfig"

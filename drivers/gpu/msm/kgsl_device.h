@@ -33,8 +33,6 @@
 #define KGSL_TIMEOUT_DEFAULT        0xFFFFFFFF
 #define KGSL_TIMEOUT_PART           50 /* 50 msec */
 
-#define FIRST_TIMEOUT (HZ / 2)
-
 #define KGSL_IOCTL_FUNC(_cmd, _func) \
 	[_IOC_NR((_cmd))] = \
 		{ .cmd = (_cmd), .func = (_func) }
@@ -252,7 +250,6 @@ struct kgsl_device {
 	int open_count;
 
 	struct mutex mutex;
-	struct mutex mutex_mmu_sync;
 	uint32_t state;
 	uint32_t requested_state;
 
@@ -293,6 +290,8 @@ struct kgsl_device {
 	struct device *busmondev; /* pseudo dev for GPU BW voting governor */
 };
 
+#define KGSL_MMU_DEVICE(_mmu) \
+	container_of((_mmu), struct kgsl_device, mmu)
 
 #define KGSL_DEVICE_COMMON_INIT(_dev) \
 	.hwaccess_gate = COMPLETION_INITIALIZER((_dev).hwaccess_gate),\
@@ -305,7 +304,6 @@ struct kgsl_device {
 	.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER((_dev).wait_queue),\
 	.active_cnt_wq = __WAIT_QUEUE_HEAD_INITIALIZER((_dev).active_cnt_wq),\
 	.mutex = __MUTEX_INITIALIZER((_dev).mutex),\
-	.mutex_mmu_sync = __MUTEX_INITIALIZER((_dev).mutex_mmu_sync),\
 	.state = KGSL_STATE_NONE,\
 	.ver_major = DRIVER_VERSION_MAJOR,\
 	.ver_minor = DRIVER_VERSION_MINOR
@@ -636,9 +634,6 @@ long kgsl_ioctl_copy_in(unsigned int kernel_cmd, unsigned int user_cmd,
 long kgsl_ioctl_copy_out(unsigned int kernel_cmd, unsigned int user_cmd,
 		unsigned long, unsigned char *ptr);
 
-int kgsl_mem_entry_attach_process(struct kgsl_mem_entry *entry,
-				   struct kgsl_device_private *dev_priv);
-
 /**
  * kgsl_context_put() - Release context reference count
  * @context: Pointer to the KGSL context to be released
@@ -829,24 +824,12 @@ static inline int kgsl_sysfs_store(const char *buf, unsigned int *ptr)
  * @count: Number of entries in the array
  */
 struct kgsl_snapshot_registers {
-	unsigned int *regs;
-	int count;
-	int dump;
-	unsigned int *snap_addr;
+	const unsigned int *regs;
+	unsigned int count;
 };
 
-/**
- * struct kgsl_snapshot_registers_list - list of register lists
- * @registers: Pointer to an array of register lists
- * @count: Number of entries in the array
- */
-struct kgsl_snapshot_registers_list {
-	struct kgsl_snapshot_registers *registers;
-	int count;
-};
-
-size_t kgsl_snapshot_dump_regs(struct kgsl_device *device, u8 *snapshot,
-	size_t remain, void *priv);
+size_t kgsl_snapshot_dump_registers(struct kgsl_device *device, u8 *buf,
+		size_t remain, void *priv);
 
 void kgsl_snapshot_indexed_registers(struct kgsl_device *device,
 	struct kgsl_snapshot *snapshot, unsigned int index,
@@ -864,9 +847,6 @@ struct adreno_ib_object_list;
 
 int kgsl_snapshot_add_ib_obj_list(struct kgsl_snapshot *snapshot,
 	struct adreno_ib_object_list *ib_obj_list);
-
-void kgsl_snapshot_dump_skipped_regs(struct kgsl_device *device,
-	struct kgsl_snapshot_registers_list *list);
 
 void kgsl_snapshot_add_section(struct kgsl_device *device, u16 id,
 	struct kgsl_snapshot *snapshot,

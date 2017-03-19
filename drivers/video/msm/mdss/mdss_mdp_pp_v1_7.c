@@ -180,6 +180,11 @@ static u32 dither_depth_map[DITHER_DEPTH_MAP_INDEX] = {
 #define PA_VIG_OP_ENABLE BIT(4)
 #define PA_VIG_OP_SAT_ZERO_EXP_EN BIT(2)
 
+#ifdef CONFIG_SHDISP /* CUST_ID_00039 */
+int logbuf_gamut_pos = 0;
+char logbuf_gamut_data[256];
+#endif /* CONFIG_SHDISP */
+
 static struct mdss_pp_res_type_v1_7 config_data;
 
 static int pp_hist_lut_get_config(char __iomem *base_addr, void *cfg_data,
@@ -492,6 +497,18 @@ static int pp_hist_lut_set_config(char __iomem *base_addr,
 		pr_err("hist_lut table not updated ret %d", ret);
 		return ret;
 	}
+
+#ifdef CONFIG_SHDISP /* CUST_ID_00039 */
+	for (i = 0; i < (ENHIST_LUT_ENTRIES/16); i++) {
+        int j = i*16;
+        pr_debug("lut_data->data[%d]:%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+        	j, lut_data->data[j], lut_data->data[j+1], lut_data->data[j+2], lut_data->data[j+3],
+        	   lut_data->data[j+4], lut_data->data[j+5], lut_data->data[j+6], lut_data->data[j+7],
+        	   lut_data->data[j+8], lut_data->data[j+9], lut_data->data[j+10], lut_data->data[j+11],
+        	   lut_data->data[j+12], lut_data->data[j+13], lut_data->data[j+14], lut_data->data[j+15]);
+    }
+#endif /* CONFIG_SHDISP */
+
 	for (i = 0; i < ENHIST_LUT_ENTRIES; i += 2) {
 		temp = (lut_data->data[i] & ENHIST_LOWER_VALUE_MASK) |
 			((lut_data->data[i + 1] & ENHIST_LOWER_VALUE_MASK)
@@ -907,6 +924,32 @@ static int pp_gamut_set_config(char __iomem *base_addr,
 			base_addr_scale += 4;
 		}
 	}
+#ifdef CONFIG_SHDISP /* CUST_ID_00039 */
+	logbuf_gamut_pos = 0;
+	pr_debug("GAMUT[R] START\n");
+	for (i = 0; i < MDP_GAMUT_TABLE_NUM_V1_7; i++) {
+		for (j = 0; j < gamut_data->tbl_size[i]; j++) {
+			logbuf_gamut_pos += sprintf(&logbuf_gamut_data[logbuf_gamut_pos], "0x%08X ", gamut_data->c0_data[i][j]);
+			if ((j != 0) && ((j % 16 == 0) || (j == (gamut_data->tbl_size[i] - 1)))) {
+				pr_debug("%s\n", logbuf_gamut_data);
+				logbuf_gamut_pos = 0;
+			}
+		}
+	}
+	pr_debug("GAMUT[R] END\n");
+	logbuf_gamut_pos = 0;
+	pr_debug("GAMUT[GB] START\n");
+	for (i = 0; i < MDP_GAMUT_TABLE_NUM_V1_7; i++) {
+		for (j = 0; j < gamut_data->tbl_size[i]; j++) {
+			logbuf_gamut_pos += sprintf(&logbuf_gamut_data[logbuf_gamut_pos], "0x%08X ", gamut_data->c1_c2_data[i][j]);
+			if ((j != 0) && ((j % 16 == 0) || (j == (gamut_data->tbl_size[i] - 1)))) {
+				pr_debug("%s\n", logbuf_gamut_data);
+				logbuf_gamut_pos = 0;
+			}
+		}
+	}
+	pr_debug("GAMUT[GB] END\n");
+#endif /* CONFIG_SHDISP */
 	writel_relaxed(GAMUT_CLK_GATING_PARTIAL_ACTIVE,
 				   base_addr + GAMUT_CLK_CTRL);
 bail_out:
@@ -952,6 +995,12 @@ static int pp_pcc_set_config(char __iomem *base_addr,
 		pr_err("invalid pcc version %d\n", pcc_cfg_data->version);
 		return -EINVAL;
 	}
+#ifdef CONFIG_SHDISP /* CUST_ID_00039 */
+	if (pcc_cfg_data->ops & MDP_PP_OPS_DISABLE) {
+		pr_debug("Disable PCC\n");
+		goto bail_out;
+	}
+#endif /* CONFIG_SHDISP */
 	if (!(pcc_cfg_data->ops & ~(MDP_PP_OPS_READ))) {
 		pr_info("only read ops is set %d", pcc_cfg_data->ops);
 		return 0;
@@ -1756,6 +1805,13 @@ static int pp_igc_set_config(char __iomem *base_addr,
 	}
 
 	lut_cfg_data = (struct mdp_igc_lut_data *) cfg_data;
+#ifdef CONFIG_SHDISP /* CUST_ID_00039 */
+	if ((lut_cfg_data->version == mdp_igc_v1_7) &&
+		(lut_cfg_data->ops & MDP_PP_OPS_DISABLE)) {
+		pr_debug("Disable IGC\n");
+		goto bail_out;
+	}
+#endif /* CONFIG_SHDISP */
 	if (lut_cfg_data->version != mdp_igc_v1_7 ||
 	    !lut_cfg_data->cfg_payload) {
 		pr_err("invalid igc version %d payload %p\n",

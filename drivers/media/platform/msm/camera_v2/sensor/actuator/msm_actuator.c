@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -156,7 +156,7 @@ static int msm_actuator_bivcm_handle_i2c_ops(
 	uint32_t hw_dword = hw_params;
 	uint16_t i2c_byte1 = 0, i2c_byte2 = 0;
 	uint16_t value = 0, reg_data = 0;
-	uint32_t size = a_ctrl->reg_tbl_size, i = 0, j = 0;
+	uint32_t size = a_ctrl->reg_tbl_size, i = 0;
 	int32_t rc = 0;
 	struct msm_camera_i2c_reg_array i2c_tbl;
 	struct msm_camera_i2c_reg_setting reg_setting;
@@ -266,23 +266,17 @@ static int msm_actuator_bivcm_handle_i2c_ops(
 					write_arr[i].addr_type);
 				break;
 			}
-			for (j = 0; j < ACTUATOR_MAX_POLL_COUNT; j++) {
-				rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_poll(
-					&a_ctrl->i2c_client,
-					write_arr[i].reg_addr,
-					write_arr[i].reg_data,
-					write_arr[i].data_type);
-				if (rc == 1)
-					continue;
-				if (rc < 0) {
-					pr_err("i2c poll error:%d\n", rc);
-					return rc;
-				}
-				break;
+
+			rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_poll(
+				&a_ctrl->i2c_client,
+				write_arr[i].reg_addr,
+				write_arr[i].reg_data,
+				write_arr[i].data_type,
+				write_arr[i].delay);
+			if (rc < 0) {
+				pr_err("i2c poll error:%d\n", rc);
+				return rc;
 			}
-			if (j == ACTUATOR_MAX_POLL_COUNT)
-				CDBG("%s:%d Poll register not as expected\n",
-				__func__, __LINE__);
 			break;
 		case MSM_ACTUATOR_READ_WRITE:
 			i2c_tbl.reg_addr = write_arr[i].reg_addr;
@@ -386,23 +380,30 @@ static int32_t msm_actuator_init_focus(struct msm_actuator_ctrl_t *a_ctrl,
 				settings[i].reg_addr,
 				settings[i].reg_data,
 				settings[i].data_type);
+			if (settings[i].delay > 20)
+				msleep(settings[i].delay);
+			else if (0 != settings[i].delay)
+				usleep_range(settings[i].delay * 1000,
+					(settings[i].delay * 1000) + 1000);
 			break;
 		case MSM_ACT_POLL:
 			rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_poll(
 				&a_ctrl->i2c_client,
 				settings[i].reg_addr,
 				settings[i].reg_data,
-				settings[i].data_type);
+				settings[i].data_type,
+				settings[i].delay);
 			break;
 		default:
 			pr_err("Unsupport i2c_operation: %d\n",
 				settings[i].i2c_operation);
 			break;
+		}
 
-		if (0 != settings[i].delay)
-			msleep(settings[i].delay);
-
-		if (rc < 0)
+		if (rc < 0) {
+			pr_err("%s:%d fail addr = 0X%X, data = 0X%X, dt = %d",
+				__func__, __LINE__, settings[i].reg_addr,
+				settings[i].reg_data, settings[i].data_type);
 			break;
 		}
 	}
@@ -852,7 +853,7 @@ static int32_t msm_actuator_bivcm_init_step_table(
 {
 	int16_t code_per_step = 0;
 	int16_t cur_code = 0;
-	int16_t step_index = 0, region_index = 0;
+	uint16_t step_index = 0, region_index = 0;
 	uint16_t step_boundary = 0;
 	uint32_t max_code_size = 1;
 	uint16_t data_size = set_info->actuator_params.data_size;
@@ -893,6 +894,15 @@ static int32_t msm_actuator_bivcm_init_step_table(
 		step_boundary =
 			a_ctrl->region_params[region_index].
 			step_bound[MOVE_NEAR];
+		if (step_boundary >
+			set_info->af_tuning_params.total_steps) {
+			pr_err("invalid step_boundary = %d, max_val = %d",
+				step_boundary,
+				set_info->af_tuning_params.total_steps);
+			kfree(a_ctrl->step_position_table);
+			a_ctrl->step_position_table = NULL;
+			return -EINVAL;
+		}
 		qvalue = a_ctrl->region_params[region_index].qvalue;
 		for (; step_index <= step_boundary;
 			step_index++) {
@@ -928,20 +938,25 @@ static int32_t msm_actuator_init_step_table(struct msm_actuator_ctrl_t *a_ctrl,
 	int16_t code_per_step = 0;
 	uint32_t qvalue = 0;
 	int16_t cur_code = 0;
-	int16_t step_index = 0, region_index = 0;
+	uint16_t step_index = 0, region_index = 0;
 	uint16_t step_boundary = 0;
 	uint32_t max_code_size = 1;
 	uint16_t data_size = set_info->actuator_params.data_size;
 	CDBG("Enter\n");
 
+	/* validate the actuator state */
+	if (a_ctrl->actuator_state != ACT_OPS_ACTIVE) {
+		pr_err("%s:%d invalid actuator_state %d\n"
+			, __func__, __LINE__, a_ctrl->actuator_state);
+		return -EINVAL;
+	}
 	for (; data_size > 0; data_size--)
 		max_code_size *= 2;
 
 	a_ctrl->max_code_size = max_code_size;
-	if ((a_ctrl->actuator_state == ACT_OPS_ACTIVE) &&
-		(a_ctrl->step_position_table != NULL)) {
-		kfree(a_ctrl->step_position_table);
-	}
+
+	/* free the step_position_table to allocate a new one */
+	kfree(a_ctrl->step_position_table);
 	a_ctrl->step_position_table = NULL;
 
 	if (set_info->af_tuning_params.total_steps
@@ -970,6 +985,15 @@ static int32_t msm_actuator_init_step_table(struct msm_actuator_ctrl_t *a_ctrl,
 		step_boundary =
 			a_ctrl->region_params[region_index].
 			step_bound[MOVE_NEAR];
+		if (step_boundary >
+			set_info->af_tuning_params.total_steps) {
+			pr_err("invalid step_boundary = %d, max_val = %d",
+				step_boundary,
+				set_info->af_tuning_params.total_steps);
+			kfree(a_ctrl->step_position_table);
+			a_ctrl->step_position_table = NULL;
+			return -EINVAL;
+		}
 		for (; step_index <= step_boundary;
 			step_index++) {
 			if (qvalue > 1 && qvalue <= MAX_QVALUE)
@@ -1662,6 +1686,8 @@ static int32_t msm_actuator_power_up(struct msm_actuator_ctrl_t *a_ctrl)
 		return rc;
 	}
 
+	/* VREG needs some delay to power up */
+	usleep_range(2000, 3000);
 	a_ctrl->actuator_state = ACT_ENABLE_STATE;
 
 	CDBG("Exit\n");
@@ -1754,7 +1780,7 @@ static int32_t msm_actuator_i2c_probe(struct i2c_client *client,
 	act_ctrl_t->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_ACTUATOR;
 	act_ctrl_t->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x2;
 	msm_sd_register(&act_ctrl_t->msm_sd);
-	msm_actuator_v4l2_subdev_fops = v4l2_subdev_fops;
+	msm_cam_copy_v4l2_subdev_fops(&msm_actuator_v4l2_subdev_fops);
 #ifdef CONFIG_COMPAT
 	msm_actuator_v4l2_subdev_fops.compat_ioctl32 =
 		msm_actuator_subdev_fops_ioctl;
@@ -1855,7 +1881,7 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 	msm_actuator_t->msm_sd.close_seq = MSM_SD_CLOSE_2ND_CATEGORY | 0x2;
 	msm_sd_register(&msm_actuator_t->msm_sd);
 	msm_actuator_t->actuator_state = ACT_DISABLE_STATE;
-	msm_actuator_v4l2_subdev_fops = v4l2_subdev_fops;
+	msm_cam_copy_v4l2_subdev_fops(&msm_actuator_v4l2_subdev_fops);
 #ifdef CONFIG_COMPAT
 	msm_actuator_v4l2_subdev_fops.compat_ioctl32 =
 		msm_actuator_subdev_fops_ioctl;

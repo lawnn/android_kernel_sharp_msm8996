@@ -40,6 +40,10 @@
 
 #include <trace/events/exception.h>
 
+#ifdef CONFIG_SHLOG_SYSTEM
+#include "sharp/shrlog.h"
+#endif /* CONFIG_SHLOG_SYSTEM */
+
 static const char *fault_name(unsigned int esr);
 
 /*
@@ -127,6 +131,9 @@ static void __do_user_fault(struct task_struct *tsk, unsigned long addr,
 			addr, esr);
 		show_pte(tsk->mm, addr);
 		show_regs(regs);
+#ifdef CONFIG_SHLOG_SYSTEM
+		rlog_app_start( tsk, addr, esr, sig, code, regs );
+#endif /* CONFIG_SHLOG_SYSTEM */
 	}
 
 	tsk->thread.fault_address = addr;

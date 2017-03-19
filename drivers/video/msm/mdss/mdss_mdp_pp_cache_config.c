@@ -995,9 +995,15 @@ igc_exit:
 	return ret;
 }
 
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+static int pp_pgc_lut_cache_params_v1_7(struct mdp_pgc_lut_data *config,
+			    struct mdss_pp_res_type *mdss_pp_res,
+			    int location, u32 copy_from_kernel)
+#else /* CONFIG_SHDISP */
 static int pp_pgc_lut_cache_params_v1_7(struct mdp_pgc_lut_data *config,
 			    struct mdss_pp_res_type *mdss_pp_res,
 			    int location)
+#endif /* CONFIG_SHDISP */
 {
 	int ret = 0;
 	u32 sz = 0;
@@ -1018,11 +1024,23 @@ static int pp_pgc_lut_cache_params_v1_7(struct mdp_pgc_lut_data *config,
 		pr_err("invalid resource payload\n");
 		return -EINVAL;
 	}
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+	if (copy_from_kernel) {
+		memcpy(&v17_usr_config, config->cfg_payload, sizeof(v17_usr_config));
+	} else {
+		if (copy_from_user(&v17_usr_config, config->cfg_payload,
+				   sizeof(v17_usr_config))) {
+			pr_err("failed to copy from user config info\n");
+			return -EFAULT;
+		}
+	}
+#else /* CONFIG_SHDISP */
 	if (copy_from_user(&v17_usr_config, config->cfg_payload,
 			   sizeof(v17_usr_config))) {
 		pr_err("failed to copy from user config info\n");
 		return -EFAULT;
 	}
+#endif /* CONFIG_SHDISP */
 	if (v17_usr_config.len != PGC_LUT_ENTRIES) {
 		pr_err("invalid entries for pgc act %d exp %d\n",
 			v17_usr_config.len, PGC_LUT_ENTRIES);
@@ -1064,6 +1082,32 @@ static int pp_pgc_lut_cache_params_v1_7(struct mdp_pgc_lut_data *config,
 	}
 	v17_cache_data->len = 0;
 	sz = PGC_LUT_ENTRIES * sizeof(u32);
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+	if (copy_from_kernel) {
+		memcpy(v17_cache_data->c0_data, v17_usr_config.c0_data, sz);
+		memcpy(v17_cache_data->c1_data, v17_usr_config.c1_data, sz);
+		memcpy(v17_cache_data->c2_data, v17_usr_config.c2_data, sz);
+	} else {
+		if (copy_from_user(v17_cache_data->c0_data, v17_usr_config.c0_data,
+				   sz)) {
+			pr_err("failed to copy c0_data from user sz %d\n", sz);
+			ret = -EFAULT;
+			goto bail_out;
+		}
+		if (copy_from_user(v17_cache_data->c1_data, v17_usr_config.c1_data,
+				   sz)) {
+			pr_err("failed to copy c1_data from user sz %d\n", sz);
+			ret = -EFAULT;
+			goto bail_out;
+		}
+		if (copy_from_user(v17_cache_data->c2_data, v17_usr_config.c2_data,
+				   sz)) {
+			pr_err("failed to copy c2_data from user sz %d\n", sz);
+			ret = -EFAULT;
+			goto bail_out;
+		}
+	}
+#else /* CONFIG_SHDISP */
 	if (copy_from_user(v17_cache_data->c0_data, v17_usr_config.c0_data,
 			   sz)) {
 		pr_err("failed to copy c0_data from user sz %d\n", sz);
@@ -1082,6 +1126,7 @@ static int pp_pgc_lut_cache_params_v1_7(struct mdp_pgc_lut_data *config,
 		ret = -EFAULT;
 		goto bail_out;
 	}
+#endif /* CONFIG_SHDISP */
 	v17_cache_data->len = PGC_LUT_ENTRIES;
 	return 0;
 bail_out:
@@ -1092,8 +1137,13 @@ bail_out:
 	return ret;
 }
 
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+int pp_pgc_lut_cache_params(struct mdp_pgc_lut_data *config,
+			    struct mdss_pp_res_type *mdss_pp_res, int loc, u32 copy_from_kernel)
+#else /* CONFIG_SHDISP */
 int pp_pgc_lut_cache_params(struct mdp_pgc_lut_data *config,
 			    struct mdss_pp_res_type *mdss_pp_res, int loc)
+#endif /* CONFIG_SHDISP */
 {
 	int ret = 0;
 	if (!config || !mdss_pp_res) {
@@ -1103,7 +1153,11 @@ int pp_pgc_lut_cache_params(struct mdp_pgc_lut_data *config,
 	}
 	switch (config->version) {
 	case mdp_pgc_v1_7:
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+		ret = pp_pgc_lut_cache_params_v1_7(config, mdss_pp_res, loc, copy_from_kernel);
+#else /* CONFIG_SHDISP */
 		ret = pp_pgc_lut_cache_params_v1_7(config, mdss_pp_res, loc);
+#endif /* CONFIG_SHDISP */
 		break;
 	default:
 		pr_err("unsupported igc version %d\n",
@@ -1470,3 +1524,65 @@ exit:
 	pp_info->pcc_cfg_data.cfg_payload = cfg_payload;
 	return ret;
 }
+
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+int mdss_mdp_specified_gc_lut_write(struct mdp_specified_gc_lut_data *config, struct mdss_pp_res_type *mdss_pp_res)
+{
+	int ret = 0;
+	uint32_t index;
+	u32 disp_num;
+	struct mdp_pgc_lut_data_v1_7 *v17_cache_data = NULL;
+	struct mdss_pp_res_type_v1_7 *res_cache = NULL;
+	
+	disp_num = 0;
+	res_cache = mdss_pp_res->pp_data_res;
+	if (!res_cache) {
+		pr_err("invalid resource payload\n");
+		return -EINVAL;
+	}
+
+	if ((config->r_data >= BIT(10)) || (config->g_data >= BIT(10)) || (config->b_data >= BIT(10))) {
+		pr_err("invalid data over MAX r=%08X g=%08X b=%08X\n", config->r_data, config->g_data, config->b_data);
+		return -EINVAL;
+	}
+
+	index = 0;
+
+	v17_cache_data = &res_cache->pgc_dspp_v17_data[disp_num];
+	v17_cache_data->c0_data = &res_cache->pgc_table_c0[disp_num][0];
+	v17_cache_data->c1_data = &res_cache->pgc_table_c1[disp_num][0];
+	v17_cache_data->c2_data = &res_cache->pgc_table_c2[disp_num][0];
+	mdss_pp_res->pgc_disp_cfg[disp_num].cfg_payload =
+		v17_cache_data;
+
+	v17_cache_data->c0_data[index] = config->g_data;
+	v17_cache_data->c1_data[index] = config->b_data;
+	v17_cache_data->c2_data[index] = config->r_data;
+	v17_cache_data->len = PGC_LUT_ENTRIES;
+
+	return ret;
+}
+
+int mdss_mdp_specified_gc_lut_read(struct mdp_specified_gc_lut_data *config, struct mdss_pp_res_type *mdss_pp_res)
+{
+	int ret = 0;
+	uint32_t index;
+	u32 disp_num;
+	struct mdss_pp_res_type_v1_7 *res_cache = NULL;
+	
+	disp_num = 0;
+	res_cache = mdss_pp_res->pp_data_res;
+	if (!res_cache) {
+		pr_err("invalid resource payload\n");
+		return -EINVAL;
+	}
+
+	index = config->index;
+
+	config->g_data = res_cache->pgc_table_c0[disp_num][index];
+	config->b_data = res_cache->pgc_table_c1[disp_num][index];
+	config->r_data = res_cache->pgc_table_c2[disp_num][index];
+
+	return ret;
+}
+#endif /* CONFIG_SHDISP */

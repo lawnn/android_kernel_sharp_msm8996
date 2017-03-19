@@ -1588,6 +1588,10 @@ config SERIAL_MEN_Z135
 	  This driver can also be build as a module. If so, the module will be called
 	  men_z135_uart.ko
 
+config SERIAL_EXPAND_DEBUG_FUNCTION_SH
+	bool "SERIAL customize expand debug function"
+	default y
+
 endmenu
 
 config SERIAL_MCTRL_GPIO

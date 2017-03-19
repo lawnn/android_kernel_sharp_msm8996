@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -25,7 +25,10 @@
 #include "include/msm_csid_3_2_hwreg.h"
 #include "include/msm_csid_3_5_hwreg.h"
 #include "include/msm_csid_3_4_1_hwreg.h"
+#include "include/msm_csid_3_4_2_hwreg.h"
+#include "include/msm_csid_3_4_3_hwreg.h"
 #include "include/msm_csid_3_6_0_hwreg.h"
+#include "include/msm_csid_3_5_1_hwreg.h"
 #include "cam_hw_ops.h"
 
 #define V4L2_IDENT_CSID                            50002
@@ -39,9 +42,12 @@
 #define CSID_VERSION_V33                      0x30030000
 #define CSID_VERSION_V34                      0x30040000
 #define CSID_VERSION_V34_1                    0x30040001
+#define CSID_VERSION_V34_2                    0x30040002
+#define CSID_VERSION_V34_3                    0x30040003
 #define CSID_VERSION_V36                      0x30060000
 #define CSID_VERSION_V37                      0x30070000
 #define CSID_VERSION_V35                      0x30050000
+#define CSID_VERSION_V35_1                    0x30050001
 #define CSID_VERSION_V40                      0x40000000
 #define MSM_CSID_DRV_NAME                    "msm_csid"
 
@@ -455,7 +461,8 @@ static int msm_csid_init(struct csid_device *csid_dev, uint32_t *csid_version)
 		return -EINVAL;
 	}
 
-	rc = cam_config_ahb_clk(CAM_AHB_CLIENT_CSID, CAMERA_AHB_SVS_VOTE);
+	rc = cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CSID,
+			CAM_AHB_SVS_VOTE);
 	if (rc < 0) {
 		pr_err("%s: failed to vote for AHB\n", __func__);
 		return rc;
@@ -589,8 +596,8 @@ top_vreg_config_failed:
 	iounmap(csid_dev->base);
 	csid_dev->base = NULL;
 ioremap_fail:
-	if (cam_config_ahb_clk(CAM_AHB_CLIENT_CSID,
-		CAMERA_AHB_SUSPEND_VOTE) < 0)
+	if (cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CSID,
+		CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote from AHB\n", __func__);
 	return rc;
 }
@@ -660,8 +667,8 @@ static int msm_csid_release(struct csid_device *csid_dev)
 	csid_dev->base = NULL;
 	csid_dev->csid_state = CSID_POWER_DOWN;
 
-	if (cam_config_ahb_clk(CAM_AHB_CLIENT_CSID,
-		CAMERA_AHB_SUSPEND_VOTE) < 0)
+	if (cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_CSID,
+		CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote from AHB\n", __func__);
 	return 0;
 }
@@ -680,13 +687,6 @@ static int32_t msm_csid_cmd(struct csid_device *csid_dev, void __user *arg)
 	switch (cdata->cfgtype) {
 	case CSID_INIT:
 		rc = msm_csid_init(csid_dev, &cdata->cfg.csid_version);
-		if (rc == -ETIMEDOUT) {
-			pr_err("%s:%d msm_csid_init timeout retrying",
-				__func__, __LINE__);
-			rc = msm_csid_init(csid_dev, &cdata->cfg.csid_version);
-			if (rc < 0)
-				pr_err("%s:%d fail rc = ", __func__, __LINE__);
-		}
 		CDBG("%s csid version 0x%x\n", __func__,
 			cdata->cfg.csid_version);
 		break;
@@ -819,13 +819,6 @@ static int32_t msm_csid_cmd32(struct csid_device *csid_dev, void __user *arg)
 	switch (cdata->cfgtype) {
 	case CSID_INIT:
 		rc = msm_csid_init(csid_dev, &cdata->cfg.csid_version);
-		if (rc == -ETIMEDOUT) {
-			pr_err("%s:%d msm_csid_init timeout retrying",
-				__func__, __LINE__);
-			rc = msm_csid_init(csid_dev, &cdata->cfg.csid_version);
-			if (rc < 0)
-				pr_err("%s:%d fail rc = ", __func__, __LINE__);
-		}
 		arg32->cfg.csid_version = local_arg.cfg.csid_version;
 		CDBG("%s csid version 0x%x\n", __func__,
 			cdata->cfg.csid_version);
@@ -1195,7 +1188,7 @@ static int csid_probe(struct platform_device *pdev)
 	msm_sd_register(&new_csid_dev->msm_sd);
 
 #ifdef CONFIG_COMPAT
-	msm_csid_v4l2_subdev_fops = v4l2_subdev_fops;
+	msm_cam_copy_v4l2_subdev_fops(&msm_csid_v4l2_subdev_fops);
 	msm_csid_v4l2_subdev_fops.compat_ioctl32 = msm_csid_subdev_fops_ioctl32;
 	new_csid_dev->msm_sd.sd.devnode->fops = &msm_csid_v4l2_subdev_fops;
 #endif
@@ -1261,10 +1254,22 @@ static int csid_probe(struct platform_device *pdev)
 		new_csid_dev->ctrl_reg->csid_lane_assign =
 			csid_lane_assign_v3_4_1;
 	} else if (of_device_is_compatible(new_csid_dev->pdev->dev.of_node,
+		"qcom,csid-v3.4.2")) {
+		new_csid_dev->ctrl_reg->csid_reg = csid_v3_4_2;
+		new_csid_dev->hw_dts_version = CSID_VERSION_V34_2;
+		new_csid_dev->ctrl_reg->csid_lane_assign =
+			csid_lane_assign_v3_4_2;
+	} else if (of_device_is_compatible(new_csid_dev->pdev->dev.of_node,
+		"qcom,csid-v3.4.3")) {
+		new_csid_dev->ctrl_reg->csid_reg = csid_v3_4_3;
+		new_csid_dev->hw_dts_version = CSID_VERSION_V34_3;
+		new_csid_dev->ctrl_reg->csid_lane_assign =
+			csid_lane_assign_v3_4_3;
+	} else if (of_device_is_compatible(new_csid_dev->pdev->dev.of_node,
 		"qcom,csid-v3.6.0")) {
 		new_csid_dev->ctrl_reg->csid_reg = csid_v3_6_0;
 		new_csid_dev->hw_dts_version = CSID_VERSION_V36;
-				new_csid_dev->ctrl_reg->csid_lane_assign =
+		new_csid_dev->ctrl_reg->csid_lane_assign =
 			csid_lane_assign_v3_6_0;
 	} else if (of_device_is_compatible(new_csid_dev->pdev->dev.of_node,
 		"qcom,csid-v3.5")) {
@@ -1272,6 +1277,12 @@ static int csid_probe(struct platform_device *pdev)
 		new_csid_dev->ctrl_reg->csid_lane_assign =
 			csid_lane_assign_v3_5;
 		new_csid_dev->hw_dts_version = CSID_VERSION_V35;
+	} else if (of_device_is_compatible(new_csid_dev->pdev->dev.of_node,
+		"qcom,csid-v3.5.1")) {
+		new_csid_dev->ctrl_reg->csid_reg = csid_v3_5_1;
+		new_csid_dev->ctrl_reg->csid_lane_assign =
+			csid_lane_assign_v3_5_1;
+		new_csid_dev->hw_dts_version = CSID_VERSION_V35_1;
 	} else {
 		pr_err("%s:%d, invalid hw version : 0x%x", __func__, __LINE__,
 			new_csid_dev->hw_dts_version);

@@ -134,6 +134,8 @@ enum mdss_mdp_ctl_index {
 
 #define MDSS_MDP_REG_CTL_LAYER(lm)	\
 			((lm == 5) ? (0x024) : ((lm) * 0x004))
+#define MDSS_MDP_REG_CTL_LAYER_EXTN(lm)	\
+		((lm == 5) ? (0x54) : (MDSS_MDP_REG_CTL_LAYER(lm) + 0x40))
 #define MDSS_MDP_REG_CTL_TOP				0x014
 #define MDSS_MDP_REG_CTL_FLUSH				0x018
 #define MDSS_MDP_REG_CTL_START				0x01C
@@ -658,6 +660,8 @@ enum mdss_mdp_pingpong_index {
 
 #define MDSS_MDP_INTF_MISR_CTRL		0x180
 #define MDSS_MDP_INTF_MISR_SIGNATURE		(MDSS_MDP_INTF_MISR_CTRL + 0x4)
+#define MDSS_MDP_INTF_CMD_MISR_CTRL		(MDSS_MDP_INTF_MISR_CTRL + 0x8)
+#define MDSS_MDP_INTF_CMD_MISR_SIGNATURE	(MDSS_MDP_INTF_MISR_CTRL + 0xC)
 
 #define MDSS_MDP_REG_CDM_CSC_10_OPMODE                  0x000
 #define MDSS_MDP_REG_CDM_CSC_10_BASE                    0x004
@@ -680,6 +684,8 @@ enum mdss_mdp_pingpong_index {
 
 /* Following offsets are with respect to MDP base */
 #define MDSS_MDP_MDP_OUT_CTL_0                          0x410
+#define MDSS_MDP_INTF_CMD_MISR_CTRL		(MDSS_MDP_INTF_MISR_CTRL + 0x8)
+#define MDSS_MDP_INTF_CMD_MISR_SIGNATURE	(MDSS_MDP_INTF_MISR_CTRL + 0xC)
 /* following offsets are with respect to MDP VBIF base */
 #define MMSS_VBIF_CLKON			0x4
 #define MMSS_VBIF_RD_LIM_CONF			0x0B0

@@ -356,6 +356,9 @@ static inline void cpufreq_resume(void) {}
 #define CPUFREQ_TRANSITION_NOTIFIER	(0)
 #define CPUFREQ_POLICY_NOTIFIER		(1)
 #define CPUFREQ_GOVINFO_NOTIFIER	(2)
+#ifdef CONFIG_SHSYS_CUST
+#define SH_CPUFREQ_ADJUST_NOTIFIER	(3)
+#endif /* CONFIG_SHSYS_CUST */
 
 /* Transition notifiers */
 #define CPUFREQ_PRECHANGE		(0)
@@ -372,6 +375,19 @@ static inline void cpufreq_resume(void) {}
 
 /* Govinfo Notifiers */
 #define CPUFREQ_LOAD_CHANGE		(0)
+
+#ifdef CONFIG_SHSYS_CUST
+/* Adjust Notifiers  */
+#define SH_CPUFREQ_PERIOD		(0)
+
+struct sh_cpufreq_adjust_param {
+	int mdp_clk_ena;
+	bool kgsl_is_working;
+	int music_type;
+};
+void sh_cpufreq_notify_adjust(struct sh_cpufreq_adjust_param *sh_cpufreq_adjust, unsigned int state);
+void sh_cpufreq_update_policy_try(void);
+#endif /* CONFIG_SHSYS_CUST */
 
 #ifdef CONFIG_CPU_FREQ
 int cpufreq_register_notifier(struct notifier_block *nb, unsigned int list);

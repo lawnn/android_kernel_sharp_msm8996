@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -121,7 +121,8 @@ const char *hw_platform_subtype[] = {
 	[PLATFORM_SUBTYPE_UNKNOWN] = "Unknown",
 	[PLATFORM_SUBTYPE_CHARM] = "charm",
 	[PLATFORM_SUBTYPE_STRANGE] = "strange",
-	[PLATFORM_SUBTYPE_STRANGE_2A] = "strange_2a,"
+	[PLATFORM_SUBTYPE_STRANGE_2A] = "strange_2a",
+	[PLATFORM_SUBTYPE_INVALID] = "Invalid",
 };
 
 /* Used to parse shared memory.  Must match the modem. */
@@ -504,6 +505,8 @@ static struct msm_soc_info cpu_of_id[] = {
 	/* 8996 IDs */
 	[246] = {MSM_CPU_8996, "MSM8996"},
 	[291] = {MSM_CPU_8996, "APQ8096"},
+	[305] = {MSM_CPU_8996, "MSM8996pro"},
+	[312] = {MSM_CPU_8996, "APQ8096pro"},
 
 	/* 8976 ID */
 	[266] = {MSM_CPU_8976, "MSM8976"},
@@ -514,22 +517,36 @@ static struct msm_soc_info cpu_of_id[] = {
 	[270] = {MSM_CPU_8929, "MSM8229"},
 	[271] = {MSM_CPU_8929, "APQ8029"},
 
+	/* Cobalt ID */
+	[292] = {MSM_CPU_COBALT, "MSMCOBALT"},
+
+	/* Titanium ID */
 	[293] = {MSM_CPU_TITANIUM, "MSMTITANIUM"},
-	/* FERMIUM ID */
-	[290] = {MSM_CPU_FERMIUM, "MDMFERMIUM"},
-	[296] = {MSM_CPU_FERMIUM, "MDMFERMIUM"},
-	[297] = {MSM_CPU_FERMIUM, "MDMFERMIUM"},
-	[298] = {MSM_CPU_FERMIUM, "MDMFERMIUM"},
-	[299] = {MSM_CPU_FERMIUM, "MDMFERMIUM"},
+	[304] = {MSM_CPU_TITANIUM, "APQTITANIUM"},
+
+	/* 9607 IDs */
+	[290] = {MSM_CPU_9607, "MDM9607"},
+	[296] = {MSM_CPU_9607, "MDM8207"},
+	[297] = {MSM_CPU_9607, "MDM9207"},
+	[298] = {MSM_CPU_9607, "MDM9307"},
+	[299] = {MSM_CPU_9607, "MDM9628"},
 
 	/* Californium IDs */
+	[279] = {MSM_CPU_CALIFORNIUM, "MDMCALIFORNIUM"},
 	[283] = {MSM_CPU_CALIFORNIUM, "MDMCALIFORNIUM"},
 	[284] = {MSM_CPU_CALIFORNIUM, "MDMCALIFORNIUM"},
 	[285] = {MSM_CPU_CALIFORNIUM, "MDMCALIFORNIUM"},
 	[286] = {MSM_CPU_CALIFORNIUM, "MDMCALIFORNIUM"},
 
-	/*MSMTHORIUM ID  */
-	[294] = {MSM_CPU_THORIUM, "MSMTHORIUM"},
+	/*MSM8937 ID  */
+	[294] = {MSM_CPU_8937, "MSM8937"},
+	[295] = {MSM_CPU_8937, "APQ8937"},
+
+	/* MSMGOLD IDs */
+	[303] = {MSM_CPU_GOLD, "MSMGOLD"},
+	[307] = {MSM_CPU_GOLD, "APQGOLD"},
+	[308] = {MSM_CPU_GOLD, "MSMGOLD"},
+	[309] = {MSM_CPU_GOLD, "MSMGOLD"},
 
 	/* Uninitialized IDs are not known to run Linux.
 	   MSM_CPU_UNKNOWN is set to 0 to ensure these IDs are
@@ -764,10 +781,14 @@ msm_get_platform_subtype(struct device *dev,
 		}
 		return snprintf(buf, PAGE_SIZE, "%-.32s\n",
 					qrd_hw_platform_subtype[hw_subtype]);
+	} else {
+		if (hw_subtype >= PLATFORM_SUBTYPE_INVALID) {
+			pr_err("Invalid hardware platform subtype\n");
+			hw_subtype = PLATFORM_SUBTYPE_INVALID;
+		}
+		return snprintf(buf, PAGE_SIZE, "%-.32s\n",
+			hw_platform_subtype[hw_subtype]);
 	}
-
-	return snprintf(buf, PAGE_SIZE, "%-.32s\n",
-		hw_platform_subtype[hw_subtype]);
 }
 
 static ssize_t
@@ -1124,13 +1145,21 @@ static void * __init setup_dummy_socinfo(void)
 		dummy_socinfo.id = 293;
 		strlcpy(dummy_socinfo.build_id, "msmtitanium - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_mdmfermium()) {
+	} else if (early_machine_is_mdm9607()) {
 		dummy_socinfo.id = 290;
-		strlcpy(dummy_socinfo.build_id, "mdmfermium - ",
+		strlcpy(dummy_socinfo.build_id, "mdm9607 - ",
 			sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_msmthorium()) {
+	} else if (early_machine_is_msmcobalt()) {
+		dummy_socinfo.id = 292;
+		strlcpy(dummy_socinfo.build_id, "msmcobalt - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_msm8937()) {
 		dummy_socinfo.id = 294;
-		strlcpy(dummy_socinfo.build_id, "msmthorium - ",
+		strlcpy(dummy_socinfo.build_id, "msm8937 - ",
+			sizeof(dummy_socinfo.build_id));
+	} else if (early_machine_is_msmgold()) {
+		dummy_socinfo.id = 303;
+		strlcpy(dummy_socinfo.build_id, "msmgold - ",
 			sizeof(dummy_socinfo.build_id));
 	}
 

@@ -36,6 +36,25 @@
 #define MMC_DEVFRQ_DEFAULT_DOWN_THRESHOLD 5
 #define MMC_DEVFRQ_DEFAULT_POLLING_MSEC 100
 
+#ifdef CONFIG_CLOCKTIME_MMC_CUST_SH
+#ifdef CONFIG_ARM_ARCH_TIMER
+#include <asm/arch_timer.h>
+#else /* CONFIG_ARM_ARCH_TIMER */
+#include "../timer.h"
+#endif /* CONFIG_ARM_ARCH_TIMER */
+
+int64_t sh_mmc_timer_get_sclk_time(void)
+{
+	int64_t rc = 0;
+#ifdef CONFIG_ARM_ARCH_TIMER
+	rc = (int64_t)arch_counter_get_cntpct() * 53;
+#else /* CONFIG_ARM_ARCH_TIMER */
+	rc = msm_timer_get_sclk_time(NULL);
+#endif /* CONFIG_ARM_ARCH_TIMER */
+	return rc;
+}
+#endif /* CLOCKTIME_MMC_CUST_SH */
+
 static void mmc_host_classdev_release(struct device *dev)
 {
 	struct mmc_host *host = cls_dev_to_mmc_host(dev);
@@ -191,7 +210,7 @@ bool mmc_host_may_gate_card(struct mmc_card *card)
 	 * that is the case or not.
 	 */
 	if (mmc_card_sdio(card) && card->cccr.async_intr_sup)
-		return true;
+			return true;
 
 	/*
 	 * Don't gate SDIO cards! These need to be clocked at all times

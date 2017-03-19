@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -57,6 +57,7 @@ struct intf_timing_params {
 };
 
 struct mdss_mdp_video_ctx {
+	struct mdss_mdp_ctl *ctl;
 	u32 intf_num;
 	char __iomem *base;
 	u32 intf_type;
@@ -74,6 +75,7 @@ struct mdss_mdp_video_ctx {
 	struct mutex vsync_mtx;
 	struct list_head vsync_handlers;
 	struct mdss_intf_recovery intf_recovery;
+	struct work_struct early_wakeup_dfps_work;
 };
 
 static void mdss_mdp_fetch_start_config(struct mdss_mdp_video_ctx *ctx,
@@ -81,6 +83,8 @@ static void mdss_mdp_fetch_start_config(struct mdss_mdp_video_ctx *ctx,
 
 static void mdss_mdp_fetch_end_config(struct mdss_mdp_video_ctx *ctx,
 		struct mdss_mdp_ctl *ctl);
+
+static void early_wakeup_dfps_update_work(struct work_struct *work);
 
 static inline void mdp_video_write(struct mdss_mdp_video_ctx *ctx,
 				   u32 reg, u32 val)
@@ -396,8 +400,10 @@ static int mdss_mdp_video_add_vsync_handler(struct mdss_mdp_ctl *ctl,
 		irq_en = true;
 	}
 	spin_unlock_irqrestore(&ctx->vsync_lock, flags);
-	if (irq_en)
+	if (irq_en) {
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
 		video_vsync_irq_enable(ctl, false);
+	}
 exit:
 	return ret;
 }
@@ -424,8 +430,10 @@ static int mdss_mdp_video_remove_vsync_handler(struct mdss_mdp_ctl *ctl,
 		irq_dis = true;
 	}
 	spin_unlock_irqrestore(&ctx->vsync_lock, flags);
-	if (irq_dis)
+	if (irq_dis) {
 		video_vsync_irq_disable(ctl);
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+	}
 	return 0;
 }
 
@@ -497,7 +505,7 @@ static int mdss_mdp_video_intfs_stop(struct mdss_mdp_ctl *ctl,
 {
 	struct mdss_data_type *mdata;
 	struct mdss_panel_info *pinfo;
-	struct mdss_mdp_video_ctx *ctx;
+	struct mdss_mdp_video_ctx *ctx, *sctx = NULL;
 	struct mdss_mdp_vsync_handler *tmp, *handle;
 	int ret = 0;
 
@@ -525,18 +533,18 @@ static int mdss_mdp_video_intfs_stop(struct mdss_mdp_ctl *ctl,
 	if (is_pingpong_split(ctl->mfd)) {
 		pinfo = &pdata->next->panel_info;
 
-		ctx = (struct mdss_mdp_video_ctx *) ctl->intf_ctx[SLAVE_CTX];
-		if (!ctx->ref_cnt) {
+		sctx = (struct mdss_mdp_video_ctx *) ctl->intf_ctx[SLAVE_CTX];
+		if (!sctx->ref_cnt) {
 			pr_err("Intf %d not in use\n", (inum + MDSS_MDP_INTF0));
 			return -ENODEV;
 		}
 		pr_debug("stop ctl=%d video Intf #%d base=%p", ctl->num,
-				ctx->intf_num, ctx->base);
+				sctx->intf_num, sctx->base);
 
-		ret = mdss_mdp_video_ctx_stop(ctl, pinfo, ctx);
+		ret = mdss_mdp_video_ctx_stop(ctl, pinfo, sctx);
 		if (ret) {
 			pr_err("mdss_mdp_video_ctx_stop failed for intf: %d",
-					ctx->intf_num);
+					sctx->intf_num);
 			return -EPERM;
 		}
 	}
@@ -1164,7 +1172,12 @@ int mdss_mdp_video_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	int i, ret = 0, off;
 	u32 data, flush;
 	struct mdss_mdp_video_ctx *ctx;
-	struct mdss_mdp_ctl *sctl = mdss_mdp_get_split_ctl(ctl);
+	struct mdss_mdp_ctl *sctl;
+
+	if (!ctl) {
+		pr_err("invalid ctl\n");
+		return -ENODEV;
+	}
 
 	off = 0;
 	ctx = (struct mdss_mdp_video_ctx *) ctl->intf_ctx[MASTER_CTX];
@@ -1174,8 +1187,14 @@ int mdss_mdp_video_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	}
 
 	pdata = ctl->panel_data;
+	if (!pdata) {
+		pr_err("invalid pdata\n");
+		return -ENODEV;
+	}
 
 	pdata->panel_info.cont_splash_enabled = 0;
+	sctl = mdss_mdp_get_split_ctl(ctl);
+
 	if (sctl)
 		sctl->panel_data->panel_info.cont_splash_enabled = 0;
 	else if (ctl->panel_data->next && is_pingpong_split(ctl->mfd))
@@ -1382,6 +1401,7 @@ static int mdss_mdp_video_ctx_setup(struct mdss_mdp_ctl *ctl,
 	struct mdss_data_type *mdata = ctl->mdata;
 	struct dsc_desc *dsc = NULL;
 
+	ctx->ctl = ctl;
 	ctx->intf_type = ctl->intf_type;
 	init_completion(&ctx->vsync_comp);
 	spin_lock_init(&ctx->vsync_lock);
@@ -1531,6 +1551,9 @@ static int mdss_mdp_video_intfs_setup(struct mdss_mdp_ctl *ctl,
 		return -EPERM;
 	}
 
+	/* Initialize early wakeup for the master ctx */
+	INIT_WORK(&ctx->early_wakeup_dfps_work, early_wakeup_dfps_update_work);
+
 	if (is_pingpong_split(ctl->mfd)) {
 		if ((inum + 1) >= mdata->nintf) {
 			pr_err("Intf not available for ping pong split: (%d)\n",
@@ -1613,6 +1636,65 @@ void mdss_mdp_switch_to_cmd_mode(struct mdss_mdp_ctl *ctl, int prep)
 	mdss_bus_bandwidth_ctrl(false);
 }
 
+static void early_wakeup_dfps_update_work(struct work_struct *work)
+{
+	struct mdss_mdp_video_ctx *ctx =
+		container_of(work, typeof(*ctx), early_wakeup_dfps_work);
+	struct mdss_panel_data *pdata;
+	struct mdss_panel_info *pinfo;
+	struct msm_fb_data_type *mfd;
+	struct mdss_mdp_ctl *ctl;
+	int ret = 0;
+	int dfps;
+
+	if (!ctx) {
+		pr_err("%s: invalid ctx\n", __func__);
+		return;
+	}
+
+	ctl = ctx->ctl;
+
+	if (!ctl || !ctl->panel_data || !ctl->mfd || !ctl->mfd->fbi) {
+		pr_err("%s: invalid ctl\n", __func__);
+		return;
+	}
+
+	pdata = ctl->panel_data;
+	pinfo = &ctl->panel_data->panel_info;
+	mfd =	ctl->mfd;
+
+	if (!pinfo->dynamic_fps || !ctl->ops.config_fps_fnc ||
+		!pdata->panel_info.default_fps) {
+		pr_debug("%s: dfps not enabled on this panel\n", __func__);
+		return;
+	}
+
+	/* get the default fps that was cached before any dfps update */
+	dfps = pdata->panel_info.default_fps;
+
+	ATRACE_BEGIN(__func__);
+
+	if (dfps == pinfo->mipi.frame_rate) {
+		pr_debug("%s: FPS is already %d\n",
+			__func__, dfps);
+		goto exit;
+	}
+
+	if (mdss_mdp_dfps_update_params(mfd, pdata, dfps))
+		pr_err("failed to set dfps params!\n");
+
+	/* update the HW with the new fps */
+	ATRACE_BEGIN("fps_update_wq");
+	ret = mdss_mdp_ctl_update_fps(ctl);
+	ATRACE_END("fps_update_wq");
+	if (ret)
+		pr_err("early wakeup failed to set %d fps ret=%d\n",
+			dfps, ret);
+
+exit:
+	ATRACE_END(__func__);
+}
+
 static int mdss_mdp_video_early_wake_up(struct mdss_mdp_ctl *ctl)
 {
 	u64 curr_time;
@@ -1643,6 +1725,19 @@ static int mdss_mdp_video_early_wake_up(struct mdss_mdp_ctl *ctl)
 	} else {
 		pr_debug("Nothing to done for this state (%d)\n",
 			 ctl->mfd->idle_state);
+	}
+
+	/*
+	 * Schedule an fps update, so we can go to default fps before
+	 * commit. Early wake up event is called from an interrupt
+	 * context, so do this from work queue
+	 */
+	if (ctl->panel_data && ctl->panel_data->panel_info.dynamic_fps) {
+		struct mdss_mdp_video_ctx *ctx;
+
+		ctx = ctl->intf_ctx[MASTER_CTX];
+		if (ctx)
+			schedule_work(&ctx->early_wakeup_dfps_work);
 	}
 
 	return 0;

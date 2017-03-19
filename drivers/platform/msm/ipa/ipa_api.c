@@ -1,4 +1,4 @@
-/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -24,36 +24,52 @@
 
 #define IPA_API_DISPATCH_RETURN(api, p...) \
 	do { \
-		if (ipa_api_ctrl->api) { \
-			ret = ipa_api_ctrl->api(p); \
-		} else { \
-			pr_err("%s not implemented for IPA HW ver %d\n", \
-					__func__, ipa_api_hw_type); \
-			WARN_ON(1); \
+		if (!ipa_api_ctrl) { \
+			pr_err("IPA HW is not supported on this target\n"); \
 			ret = -EPERM; \
+		} \
+		else { \
+			if (ipa_api_ctrl->api) { \
+				ret = ipa_api_ctrl->api(p); \
+			} else { \
+				pr_err("%s not implemented for IPA ver %d\n", \
+						__func__, ipa_api_hw_type); \
+				WARN_ON(1); \
+				ret = -EPERM; \
+			} \
 		} \
 	} while (0)
 
 #define IPA_API_DISPATCH(api, p...) \
 	do { \
-		if (ipa_api_ctrl->api) { \
-			ipa_api_ctrl->api(p); \
-		} else { \
-			pr_err("%s not implemented for IPA HW ver %d\n", \
-					__func__, ipa_api_hw_type); \
-			WARN_ON(1); \
+		if (!ipa_api_ctrl) \
+			pr_err("IPA HW is not supported on this target\n"); \
+		else { \
+			if (ipa_api_ctrl->api) { \
+				ipa_api_ctrl->api(p); \
+			} else { \
+				pr_err("%s not implemented for IPA ver %d\n", \
+						__func__, ipa_api_hw_type); \
+				WARN_ON(1); \
+			} \
 		} \
 	} while (0)
 
 #define IPA_API_DISPATCH_RETURN_PTR(api, p...) \
 	do { \
-		if (ipa_api_ctrl->api) { \
-			ret = ipa_api_ctrl->api(p); \
-		} else { \
-			pr_err("%s not implemented for IPA HW ver %d\n", \
-					__func__, ipa_api_hw_type); \
-			WARN_ON(1); \
+		if (!ipa_api_ctrl) { \
+			pr_err("IPA HW is not supported on this target\n"); \
 			ret = NULL; \
+		} \
+		else { \
+			if (ipa_api_ctrl->api) { \
+				ret = ipa_api_ctrl->api(p); \
+			} else { \
+				pr_err("%s not implemented for IPA ver %d\n", \
+						__func__, ipa_api_hw_type); \
+				WARN_ON(1); \
+				ret = NULL; \
+			} \
 		} \
 	} while (0)
 
@@ -1427,6 +1443,22 @@ int ipa_uc_reg_rdyCB(
 EXPORT_SYMBOL(ipa_uc_reg_rdyCB);
 
 /**
+ * ipa_uc_dereg_rdyCB() - To de-register uC ready CB
+ *
+ * Returns:	0 on success, negative on failure
+ *
+ */
+int ipa_uc_dereg_rdyCB(void)
+{
+	int ret;
+
+	IPA_API_DISPATCH_RETURN(ipa_uc_dereg_rdyCB);
+
+	return ret;
+}
+EXPORT_SYMBOL(ipa_uc_dereg_rdyCB);
+
+/**
  * ipa_rm_create_resource() - create resource
  * @create_params: [in] parameters needed
  *                  for resource initialization
@@ -2242,17 +2274,11 @@ EXPORT_SYMBOL(ipa_mhi_resume);
  *
  * This function is called by MHI client driver on MHI reset to destroy all IPA
  * MHI resources.
- *
- * Return codes: 0	  : success
- *		 negative : error
  */
-int ipa_mhi_destroy(void)
+void ipa_mhi_destroy(void)
 {
-	int ret;
+	IPA_API_DISPATCH(ipa_mhi_destroy);
 
-	IPA_API_DISPATCH_RETURN(ipa_mhi_destroy);
-
-	return ret;
 }
 EXPORT_SYMBOL(ipa_mhi_destroy);
 
@@ -2659,6 +2685,7 @@ static int ipa_generic_plat_drv_probe(struct platform_device *pdev_p)
 		}
 		break;
 	case IPA_HW_v3_0:
+	case IPA_HW_v3_1:
 		result = ipa3_plat_drv_probe(pdev_p, ipa_api_ctrl,
 			ipa_plat_drv_match);
 		if (result) {
@@ -2760,15 +2787,29 @@ int ipa_usb_xdci_suspend(u32 ul_clnt_hdl, u32 dl_clnt_hdl,
 }
 EXPORT_SYMBOL(ipa_usb_xdci_suspend);
 
-int ipa_usb_xdci_resume(u32 ul_clnt_hdl, u32 dl_clnt_hdl)
+int ipa_usb_xdci_resume(u32 ul_clnt_hdl, u32 dl_clnt_hdl,
+	enum ipa_usb_teth_prot teth_prot)
 {
 	int ret;
 
-	IPA_API_DISPATCH_RETURN(ipa_usb_xdci_resume, ul_clnt_hdl, dl_clnt_hdl);
+	IPA_API_DISPATCH_RETURN(ipa_usb_xdci_resume, ul_clnt_hdl,
+		dl_clnt_hdl, teth_prot);
 
 	return ret;
 }
 EXPORT_SYMBOL(ipa_usb_xdci_resume);
+
+int ipa_register_ipa_ready_cb(void (*ipa_ready_cb)(void *user_data),
+			      void *user_data)
+{
+	int ret;
+
+	IPA_API_DISPATCH_RETURN(ipa_register_ipa_ready_cb,
+				ipa_ready_cb, user_data);
+
+	return ret;
+}
+EXPORT_SYMBOL(ipa_register_ipa_ready_cb);
 
 static const struct dev_pm_ops ipa_pm_ops = {
 	.suspend_noirq = ipa_ap_suspend,

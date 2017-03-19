@@ -19,6 +19,21 @@
 
 #include "power.h"
 
+#ifdef CONFIG_SH_SLEEP_LOG
+#include <sharp/sh_sleeplog.h>
+#endif /* CONFIG_SH_SLEEP_LOG */
+
+#ifdef CONFIG_SHSYS_CUST_DEBUG
+#include <linux/module.h>
+enum {
+   SH_DEBUG_WAKEUP_SOURCE = 1U << 0,
+};
+static int sh_debug_mask = 0;
+module_param_named(
+   sh_debug_mask, sh_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
+);
+#endif /* CONFIG_SHSYS_CUST_DEBUG */
+
 /*
  * If set, the suspend/hibernate code will abort transitions to a sleep state
  * if wakeup events are registered during or immediately before the transition.
@@ -421,6 +436,11 @@ static void wakeup_source_activate(struct wakeup_source *ws)
 {
 	unsigned int cec;
 
+#ifdef CONFIG_SHSYS_CUST_DEBUG
+	if (sh_debug_mask & SH_DEBUG_WAKEUP_SOURCE)
+		pr_info("wake_lock: %s, type 0\n", ws->name);
+#endif /* CONFIG_SHSYS_CUST_DEBUG */
+
 	/*
 	 * active wakeup source should bring the system
 	 * out of PM_SUSPEND_FREEZE state
@@ -541,6 +561,10 @@ static void wakeup_source_deactivate(struct wakeup_source *ws)
 		return;
 	}
 
+#ifdef CONFIG_SHSYS_CUST_DEBUG
+	if (sh_debug_mask & SH_DEBUG_WAKEUP_SOURCE)
+		pr_info("wake_unlock: %s\n", ws->name);
+#endif /* CONFIG_SHSYS_CUST_DEBUG */
 	ws->active = false;
 
 	now = ktime_get();
@@ -886,6 +910,27 @@ void pm_wakep_autosleep_enabled(bool set)
 	rcu_read_unlock();
 }
 #endif /* CONFIG_PM_AUTOSLEEP */
+
+#ifdef CONFIG_SHSYS_CUST_DEBUG
+void print_active_locks(void)
+{
+	struct wakeup_source *ws;
+	if (sh_debug_mask & SH_DEBUG_WAKEUP_SOURCE) {
+		rcu_read_lock();
+		list_for_each_entry_rcu(ws, &wakeup_sources, entry) {
+			if (ws->active)
+			pr_info("active wake lock %s\n", ws->name);
+		}
+		rcu_read_unlock();
+	}
+}
+#endif /* CONFIG_SHSYS_CUST_DEBUG */
+#ifdef CONFIG_SH_SLEEP_LOG
+char *sh_write_buffer_wakeup_sources(char *buffer)
+{
+	return sh_write_buffer_wakeup_sources_internal(buffer, &wakeup_sources);
+}
+#endif /* CONFIG_SH_SLEEP_LOG */
 
 static struct dentry *wakeup_sources_stats_dentry;
 

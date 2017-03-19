@@ -47,9 +47,11 @@
 #include <asm/tlb.h>
 #include <asm/mmu_context.h>
 
+#ifdef CONFIG_SHSYS_CUST
 #ifdef CONFIG_MSM_APP_SETTINGS
 #include <asm/app_api.h>
 #endif
+#endif	//CONFIG_SHSYS_CUST
 
 #include "internal.h"
 
@@ -1276,6 +1278,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 
 	*populate = 0;
 
+#ifdef CONFIG_SHSYS_CUST
 #ifdef CONFIG_MSM_APP_SETTINGS
 	if (file && file->f_path.dentry) {
 		const char *name = file->f_path.dentry->d_name.name;
@@ -1300,6 +1303,7 @@ unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 		}
 	}
 #endif
+#endif	//CONFIG_SHSYS_CUST
 
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC?

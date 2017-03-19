@@ -15,6 +15,18 @@ config SH_MIPI_DSI
 config SH_LCD_MIPI_DSI
 	bool
 
+config SHDISP
+	bool "SHDISP"
+	default n
+
+config SHDISP_BDIC_71Y
+	bool "IR2E71Y8 support"
+	default n
+
+config SHDISP_PANEL_HAYABUSA
+	bool 'SH panel type Hayabusa'
+	default n
+
 source "drivers/char/agp/Kconfig"
 
 source "drivers/gpu/vga/Kconfig"

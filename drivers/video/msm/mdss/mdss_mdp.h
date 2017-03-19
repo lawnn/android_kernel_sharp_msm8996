@@ -55,7 +55,12 @@
 #define C0_G_Y		0	/* G/luma */
 
 /* wait for at most 2 vsync for lowest refresh rate (24hz) */
+#ifdef CONFIG_SHDISP /* CUST_ID_00066 */
+#define KOFF_TIMEOUT_TIME (84)
+#define KOFF_TIMEOUT msecs_to_jiffies(KOFF_TIMEOUT_TIME)
+#else   /* CONFIG_SHDISP */
 #define KOFF_TIMEOUT msecs_to_jiffies(84)
+#endif /* CONFIG_SHDISP */
 
 #define OVERFETCH_DISABLE_TOP		BIT(0)
 #define OVERFETCH_DISABLE_BOTTOM	BIT(1)
@@ -82,8 +87,6 @@
 #define SLAVE_CTX 1
 
 #define XIN_HALT_TIMEOUT_US	0x4000
-
-#define MAX_LAYER_COUNT		0xC
 
 /* hw cursor can only be setup in highest mixer stage */
 #define HW_CURSOR_STAGE(mdata) \
@@ -195,6 +198,7 @@ enum mdss_mdp_wb_ctl_type {
 
 enum mdss_mdp_bw_vote_mode {
 	MDSS_MDP_BW_MODE_SINGLE_LAYER,
+	MDSS_MDP_BW_MODE_SINGLE_IF,
 	MDSS_MDP_BW_MODE_MAX
 };
 
@@ -203,6 +207,27 @@ enum mdp_wb_blk_caps {
 	MDSS_MDP_WB_ROTATOR = BIT(1),
 	MDSS_MDP_WB_INTF = BIT(2),
 	MDSS_MDP_WB_UBWC = BIT(3),
+};
+
+/**
+ * enum perf_calc_vote_mode - enum to decide if mdss_mdp_get_bw_vote_mode
+ *		function needs an extra efficiency factor.
+ *
+ * @PERF_CALC_VOTE_MODE_PER_PIPE: used to check if efficiency factor is needed
+ *		based on the pipe properties.
+ * @PERF_CALC_VOTE_MODE_CTL: used to check if efficiency factor is needed based
+ *		on the controller properties.
+ * @PERF_CALC_VOTE_MODE_MAX: used to check if efficiency factor is need to vote
+ *		max MDP bandwidth.
+ *
+ * Depending upon the properties of each specific object (determined
+ * by this enum), driver decides if the mode to vote needs an
+ * extra factor.
+ */
+enum perf_calc_vote_mode {
+	PERF_CALC_VOTE_MODE_PER_PIPE,
+	PERF_CALC_VOTE_MODE_CTL,
+	PERF_CALC_VOTE_MODE_MAX,
 };
 
 struct mdss_mdp_perf_params {
@@ -245,6 +270,8 @@ struct mdss_mdp_ctl_intfs_ops {
 	 */
 	int (*reconfigure)(struct mdss_mdp_ctl *ctl,
 			enum dynamic_switch_modes mode, bool pre);
+	/* called before do any register programming  from commit thread */
+	void (*pre_programming)(struct mdss_mdp_ctl *ctl);
 };
 
 struct mdss_mdp_ctl {
@@ -335,9 +362,6 @@ struct mdss_mdp_ctl {
 	struct mdss_rect roi;
 	struct mdss_rect roi_bkup;
 
-	bool cmd_autorefresh_en;
-	int autorefresh_frame_cnt;
-
 	struct blocking_notifier_head notifier_head;
 
 	void *priv_data;
@@ -351,6 +375,7 @@ struct mdss_mdp_ctl {
 
 	u64 last_input_time;
 	int pending_mode_switch;
+	u16 frame_rate;
 };
 
 struct mdss_mdp_mixer {
@@ -432,6 +457,8 @@ struct mdss_mdp_img_data {
 	unsigned long len;
 	u32 offset;
 	u32 flags;
+	u32 dir;
+	u32 domain;
 	bool mapped;
 	bool skip_detach;
 	struct fd srcp_f;
@@ -677,6 +704,13 @@ struct mdss_overlay_private {
 	u32 bl_events;
 	u32 ad_events;
 	u32 ad_bl_events;
+
+#ifdef	CONFIG_SHDISP /* CUST_ID_00035 */
+	int fpslow_count;
+#endif /* CONFIG_SHDISP */
+#ifdef CONFIG_SHDISP /* CUST_ID_00063 */
+	struct mutex trans_ctrl_lock;
+#endif /* CONFIG_SHDISP */
 };
 
 struct mdss_mdp_set_ot_params {
@@ -684,6 +718,7 @@ struct mdss_mdp_set_ot_params {
 	u32 num;
 	u32 width;
 	u32 height;
+	u16 frame_rate;
 	bool is_rot;
 	bool is_wb;
 	bool is_yuv;
@@ -769,6 +804,34 @@ static inline bool mdss_mdp_is_both_lm_valid(struct mdss_mdp_ctl *main_ctl)
 	return (main_ctl && main_ctl->is_master &&
 		main_ctl->mixer_left && main_ctl->mixer_left->valid_roi &&
 		main_ctl->mixer_right && main_ctl->mixer_right->valid_roi);
+}
+
+enum mdss_mdp_pu_type {
+	MDSS_MDP_INVALID_UPDATE = -1,
+	MDSS_MDP_DEFAULT_UPDATE,
+	MDSS_MDP_LEFT_ONLY_UPDATE,	/* only valid for split_lm */
+	MDSS_MDP_RIGHT_ONLY_UPDATE,	/* only valid for split_lm */
+};
+
+/* only call from master ctl */
+static inline enum mdss_mdp_pu_type mdss_mdp_get_pu_type(
+	struct mdss_mdp_ctl *mctl)
+{
+	enum mdss_mdp_pu_type pu_type = MDSS_MDP_INVALID_UPDATE;
+
+	if (!mctl || !mctl->is_master)
+		return pu_type;
+
+	if (!is_split_lm(mctl->mfd) || mdss_mdp_is_both_lm_valid(mctl))
+		pu_type = MDSS_MDP_DEFAULT_UPDATE;
+	else if (mctl->mixer_left->valid_roi)
+		pu_type = MDSS_MDP_LEFT_ONLY_UPDATE;
+	else if (mctl->mixer_right->valid_roi)
+		pu_type = MDSS_MDP_RIGHT_ONLY_UPDATE;
+	else
+		pr_err("%s: invalid pu_type\n", __func__);
+
+	return pu_type;
 }
 
 static inline struct mdss_mdp_ctl *mdss_mdp_get_split_ctl(
@@ -890,6 +953,25 @@ static inline u32 get_panel_width(struct mdss_mdp_ctl *ctl)
 	return width;
 }
 
+static inline bool mdss_mdp_req_init_restore_cfg(struct mdss_data_type *mdata)
+{
+	if (IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_106) ||
+	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_108) ||
+	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_112) ||
+	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_114) ||
+	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_115) ||
+	    IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_116))
+		return true;
+
+	return false;
+}
+
 static inline int mdss_mdp_panic_signal_support_mode(
 	struct mdss_data_type *mdata)
 {
@@ -905,7 +987,13 @@ static inline int mdss_mdp_panic_signal_support_mode(
 				MDSS_MDP_HW_REV_110))
 		signal_mode = MDSS_MDP_PANIC_COMMON_REG_CFG;
 	else if (IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
-				MDSS_MDP_HW_REV_107))
+				MDSS_MDP_HW_REV_107) ||
+		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_114) ||
+		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_115) ||
+		IS_MDSS_MAJOR_MINOR_SAME(mdata->mdp_rev,
+				MDSS_MDP_HW_REV_116))
 		signal_mode = MDSS_MDP_PANIC_PER_PIPE_CFG;
 
 	return signal_mode;
@@ -1056,15 +1144,15 @@ static inline uint8_t pp_vig_csc_pipe_val(struct mdss_mdp_pipe *pipe)
 }
 
 /*
- * when DUAL_LM_SINGLE_DISPLAY is used with 2 DSC encoders, DSC_MERGE is
- * used during full frame updates. Now when we go from full frame update
- * to right-only update, we need to disable DSC_MERGE. However, DSC_MERGE
- * is controlled through DSC0_COMMON_MODE register which is double buffered,
- * and this double buffer update is tied to LM0. Now for right-only update,
- * LM0 will not get double buffer update signal. So DSC_MERGE is not disabled
- * for right-only update which is wrong HW state and leads ping-pong timeout.
- * Workaround for this is to use LM0->DSC0 pair for right-only update
- * and disable DSC_MERGE.
+ * when split_lm topology is used without 3D_Mux, either DSC_MERGE or
+ * split_panel is used during full frame updates. Now when we go from
+ * full frame update to right-only update, we need to disable DSC_MERGE or
+ * split_panel. However, those are controlled through DSC0_COMMON_MODE
+ * register which is double buffered, and this double buffer update is tied to
+ * LM0. Now for right-only update, LM0 will not get double buffer update signal.
+ * So DSC_MERGE or split_panel is not disabled for right-only update which is
+ * a wrong HW state and leads ping-pong timeout. Workaround for this is to use
+ * LM0->DSC0 pair for right-only update and disable DSC_MERGE or split_panel.
  *
  * However using LM0->DSC0 pair for right-only update requires many changes
  * at various levels of SW. To lower the SW impact and still support
@@ -1080,13 +1168,19 @@ static inline bool mdss_mdp_is_lm_swap_needed(struct mdss_data_type *mdata,
 	    !mctl->panel_data || !mctl->mfd)
 		return false;
 
-	return (is_dual_lm_single_display(mctl->mfd)) &&
+	return (is_dsc_compression(&mctl->panel_data->panel_info)) &&
 	       (mctl->panel_data->panel_info.partial_update_enabled) &&
 	       (mdss_has_quirk(mdata, MDSS_QUIRK_DSC_RIGHT_ONLY_PU)) &&
-	       (is_dsc_compression(&mctl->panel_data->panel_info)) &&
-	       (mctl->panel_data->panel_info.dsc_enc_total == 2) &&
+	       ((mctl->mfd->split_mode == MDP_DUAL_LM_DUAL_DISPLAY) ||
+		((mctl->mfd->split_mode == MDP_DUAL_LM_SINGLE_DISPLAY) &&
+		 (mctl->panel_data->panel_info.dsc_enc_total == 2))) &&
 	       (!mctl->mixer_left->valid_roi) &&
 	       (mctl->mixer_right->valid_roi);
+}
+
+static inline int mdss_mdp_get_display_id(struct mdss_mdp_pipe *pipe)
+{
+	return (pipe && pipe->mfd) ? pipe->mfd->index : -1;
 }
 
 irqreturn_t mdss_mdp_isr(int irq, void *ptr);
@@ -1100,6 +1194,8 @@ void mdss_mdp_hist_irq_disable(u32 irq);
 void mdss_mdp_irq_disable_nosync(u32 intr_type, u32 intf_num);
 int mdss_mdp_set_intr_callback(u32 intr_type, u32 intf_num,
 			       void (*fnc_ptr)(void *), void *arg);
+int mdss_mdp_set_intr_callback_nosync(u32 intr_type, u32 intf_num,
+			       void (*fnc_ptr)(void *), void *arg);
 
 void mdss_mdp_footswitch_ctrl_splash(int on);
 void mdss_mdp_batfet_ctrl(struct mdss_data_type *mdata, int enable);
@@ -1111,6 +1207,8 @@ struct mdss_data_type *mdss_mdp_get_mdata(void);
 int mdss_mdp_secure_display_ctrl(unsigned int enable);
 
 int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd);
+int mdss_mdp_dfps_update_params(struct msm_fb_data_type *mfd,
+	struct mdss_panel_data *pdata, int dfps);
 int mdss_mdp_layer_atomic_validate(struct msm_fb_data_type *mfd,
 	struct file *file, struct mdp_layer_commit_v1 *ov_commit);
 int mdss_mdp_layer_pre_commit(struct msm_fb_data_type *mfd,
@@ -1120,6 +1218,8 @@ int mdss_mdp_layer_atomic_validate_wfd(struct msm_fb_data_type *mfd,
 	struct file *file, struct mdp_layer_commit_v1 *ov_commit);
 int mdss_mdp_layer_pre_commit_wfd(struct msm_fb_data_type *mfd,
 	struct file *file, struct mdp_layer_commit_v1 *ov_commit);
+bool mdss_mdp_wfd_is_config_same(struct msm_fb_data_type *mfd,
+	struct mdp_output_layer *layer);
 
 int mdss_mdp_async_position_update(struct msm_fb_data_type *mfd,
 		struct mdp_position_update *update_pos);
@@ -1172,6 +1272,7 @@ int mdss_mdp_video_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 int mdss_mdp_cmd_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 		bool handoff);
 int mdss_mdp_ctl_splash_finish(struct mdss_mdp_ctl *ctl, bool handoff);
+void mdss_mdp_check_ctl_reset_status(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_ctl_setup(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_ctl_split_display_setup(struct mdss_mdp_ctl *ctl,
 		struct mdss_panel_data *pdata);
@@ -1263,8 +1364,13 @@ int mdss_mdp_pcc_config(struct msm_fb_data_type *mfd,
 int mdss_mdp_igc_lut_config(struct msm_fb_data_type *mfd,
 			struct mdp_igc_lut_data *config, u32 *copyback,
 				u32 copy_from_kernel);
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+int mdss_mdp_argc_config(struct msm_fb_data_type *mfd,
+			struct mdp_pgc_lut_data *config, u32 *copyback, u32 copy_from_kernel);
+#else /* CONFIG_SHDISP */
 int mdss_mdp_argc_config(struct msm_fb_data_type *mfd,
 			struct mdp_pgc_lut_data *config, u32 *copyback);
+#endif /* CONFIG_SHDISP */
 int mdss_mdp_hist_lut_config(struct msm_fb_data_type *mfd,
 			struct mdp_hist_lut_data *config, u32 *copyback);
 int mdss_mdp_pp_default_overlay_config(struct msm_fb_data_type *mfd,
@@ -1397,10 +1503,16 @@ void mdss_mdp_ctl_restore(bool locked);
 int  mdss_mdp_ctl_reset(struct mdss_mdp_ctl *ctl, bool is_recovery);
 int mdss_mdp_wait_for_xin_halt(u32 xin_id, bool is_vbif_nrt);
 void mdss_mdp_set_ot_limit(struct mdss_mdp_set_ot_params *params);
-int mdss_mdp_cmd_set_autorefresh_mode(struct mdss_mdp_ctl *ctl,
-		int frame_cnt);
-int mdss_mdp_ctl_cmd_autorefresh_enable(struct mdss_mdp_ctl *ctl,
-		int frame_cnt);
+int mdss_mdp_cmd_set_autorefresh_mode(struct mdss_mdp_ctl *ctl, int frame_cnt);
+int mdss_mdp_cmd_get_autorefresh_mode(struct mdss_mdp_ctl *ctl);
+int mdss_mdp_ctl_cmd_set_autorefresh(struct mdss_mdp_ctl *ctl, int frame_cnt);
+int mdss_mdp_ctl_cmd_get_autorefresh(struct mdss_mdp_ctl *ctl);
+
+#ifdef CONFIG_SHDISP /* CUST_ID_00034 */
+void mdss_mdp_ctl_perf_update_ctl(struct mdss_mdp_ctl *ctl,
+					int params_changed);
+#endif /* CONFIG_SHDISP */
+
 int mdss_mdp_pp_get_version(struct mdp_pp_feature_version *version);
 
 struct mdss_mdp_ctl *mdss_mdp_ctl_alloc(struct mdss_data_type *mdata,
@@ -1417,8 +1529,35 @@ struct mdss_mdp_writeback *mdss_mdp_wb_assign(u32 id, u32 reg_index);
 struct mdss_mdp_writeback *mdss_mdp_wb_alloc(u32 caps, u32 reg_index);
 void mdss_mdp_wb_free(struct mdss_mdp_writeback *wb);
 
-void mdss_dsc_parameters_calc(struct dsc_desc *dsc, int width, int height);
 void mdss_mdp_ctl_dsc_setup(struct mdss_mdp_ctl *ctl,
 	struct mdss_panel_info *pinfo);
+#ifdef CONFIG_SHDISP /* CUST_ID_00057 */
+int mdss_mdp_all_gc_lut_config(struct msm_fb_data_type *mfd, struct mdp_all_gc_lut_data *config, u32 *copyback);
+int mdss_mdp_specified_gc_lut_config(struct msm_fb_data_type *mfd, struct mdp_specified_gc_lut_data *config, u32 *copyback);
+#endif /* CONFIG_SHDISP */
+#ifdef CONFIG_SHDISP /* CUST_ID_00058 */
+int mdss_mdp_pp_gc_init(struct msm_fb_data_type *mfd);
+int mdss_mdp_pp_igc_init(struct msm_fb_data_type *mfd);
+#endif /* CONFIG_SHDISP */
+#ifdef CONFIG_SHDISP /* CUST_ID_00064 */
+void mdss_mdp_latency_deny_collapse(void);
+void mdss_mdp_latency_allow_collapse(void);
+#endif /* CONFIG_SHDISP */
 
+#ifdef CONFIG_FB_MSM_MDP_NONE
+struct mdss_data_type *mdss_mdp_get_mdata(void)
+{
+	return NULL;
+}
+
+int mdss_mdp_copy_layer_pp_info(struct mdp_input_layer *layer)
+{
+	return -EFAULT;
+}
+
+void mdss_mdp_free_layer_pp_info(struct mdp_input_layer *layer)
+{
+}
+
+#endif /* CONFIG_FB_MSM_MDP_NONE */
 #endif /* MDSS_MDP_H */
