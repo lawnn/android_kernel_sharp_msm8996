@@ -162,7 +162,7 @@ BUILD_NOW()
 
 		# create the dt.img from the compiled device files, necessary for msm8996 boot images
 		echo "Create dtb.img................"
-		./scripts/dtbTool/dtbTool -s 4096 -o READY-KERNEL/boot/dtb.img -p scripts/dtc/ arch/arm64/boot/
+		./scripts/dtbTool/dtbTool -s 4096 -o READY-KERNEL/boot/dtb.img -p scripts/dtc/ arch/arm/boot/dts/qcom/
 
 		if [ "$PYTHON_WAS_3" -eq "1" ]; then
 			rm /usr/bin/python
